@@ -90,12 +90,14 @@ func (a *Agent) execUpgrade(cmd *wire.Command) {
 	log.Printf("upgrade: binary swapped, restarting")
 
 	// 5. Restart based on init type.
+	// Systems with auto-restart (systemd, runit, s6) — just exit, the supervisor restarts us.
+	// Others — re-exec directly into the new binary.
 	switch a.host.Init {
-	case "systemd":
-		// systemd's Restart=always brings up the new binary.
+	case "systemd", "runit", "s6":
+		// Supervisor will restart into the new binary automatically.
 		os.Exit(0)
 	default:
-		// init.d / openrc — re-exec into the new binary directly.
+		// initd, openrc, procd, busybox — re-exec into the new binary directly.
 		argv0 := exePath
 		err := syscall.Exec(argv0, os.Args, os.Environ())
 		if err != nil {

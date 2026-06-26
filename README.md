@@ -11,8 +11,21 @@ Master (CLI/TUI) ──HTTP──> Server <──WebSocket── Agent
 ## Components
 
 - **Server (hub)** — HTTP control plane + WebSocket data plane. Holds the device registry, routes commands, correlates results. SQLite for persistence.
-- **Agent** — small daemon on each device. Dials out to the server over WebSocket. Executes commands, reports back. *(not yet implemented)*
+- **Agent** — small daemon on each device. Dials out to the server over WebSocket. Executes commands, reports back.
 - **Master** — CLI/TUI. Talks to the server's HTTP API. *(not yet implemented)*
+
+## Install Agent
+
+```sh
+curl -fsSL https://github.com/canavan-a/fleetman/releases/latest/download/install.sh | sh
+```
+
+Or unattended:
+
+```sh
+curl -fsSL https://github.com/canavan-a/fleetman/releases/latest/download/install.sh | \
+  sh -s -- --unattended --server 192.168.1.5:8080 --token <token> --device-id <dev-id>
+```
 
 ## Quick Start
 

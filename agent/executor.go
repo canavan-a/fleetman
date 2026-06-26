@@ -85,7 +85,18 @@ func (a *Agent) execRestartService(cmd *wire.Command) wire.Result {
 		argv = []string{"systemctl", "restart", service}
 	case "openrc":
 		argv = []string{"rc-service", service, "restart"}
-	default: // initd
+	case "procd":
+		// OpenWrt uses /etc/init.d/<service> restart
+		argv = []string{"/etc/init.d/" + service, "restart"}
+	case "runit":
+		argv = []string{"sv", "restart", service}
+	case "s6":
+		// s6 service dirs are typically under /run/service/ or /etc/s6/services/
+		argv = []string{"s6-svc", "-r", "/run/service/" + service}
+	case "busybox":
+		// BusyBox systems typically have /etc/init.d/ scripts.
+		argv = []string{"/etc/init.d/" + service, "restart"}
+	default: // initd / sysvinit
 		argv = []string{"service", service, "restart"}
 	}
 

@@ -26,6 +26,8 @@ func main() {
 		cmdConfigure(os.Args[2:])
 	case "show-config":
 		cmdShowConfig(os.Args[2:])
+	case "uninstall":
+		cmdUninstall(os.Args[2:])
 	case "version":
 		fmt.Println(Version)
 	case "help", "--help", "-h":
@@ -44,6 +46,7 @@ Usage:
   fleet-agent run            Start the agent daemon
   fleet-agent configure      Write or update config
   fleet-agent show-config    Print current config
+  fleet-agent uninstall      Stop service, remove binary and config
   fleet-agent version        Print version
 
 `)

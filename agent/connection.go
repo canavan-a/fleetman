@@ -16,7 +16,7 @@ import (
 )
 
 const (
-	heartbeatInterval = 30 * time.Second
+	heartbeatInterval = 5 * time.Second
 	baseReconnDelay   = 1 * time.Second
 	maxReconnDelay    = 60 * time.Second
 	jitterFraction    = 0.20 // ±20%

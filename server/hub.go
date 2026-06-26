@@ -18,8 +18,8 @@ const (
 	defaultCommandTimeout = 30 * time.Second
 
 	// WebSocket keepalive settings.
-	wsPingInterval = 30 * time.Second
-	wsPongTimeout  = 10 * time.Second
+	wsPingInterval = 5 * time.Second
+	wsPongTimeout  = 5 * time.Second
 )
 
 // Hub ties together the registry, command store, and WebSocket handling.
