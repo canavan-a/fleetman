@@ -1,0 +1,39 @@
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+/server/server
+/agent/agent
+/master/master
+/fleetman
+
+# Test binary
+*.test
+
+# Go build cache
+*.out
+
+# SQLite database
+*.db
+*.db-shm
+*.db-wal
+
+# Dependency directories
+/vendor/
+
+# IDE / editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+fleetman-server
+
+fleet-manager-*

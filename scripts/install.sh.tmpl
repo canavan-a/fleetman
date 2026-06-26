@@ -1,0 +1,191 @@
+#!/bin/sh
+set -e
+
+# Fleet Agent install script
+# Generated at release time — {{REPO}} and {{VERSION}} are injected by CI.
+#
+# Usage:
+#   curl -fsSL https://github.com/{{REPO}}/releases/latest/download/install.sh | sh
+#   curl -fsSL ... | sh -s -- --server wss://... --token abc --device-id dev-123
+#   curl -fsSL ... | sh -s -- --unattended --server wss://... --token abc --device-id dev-123
+
+REPO="{{REPO}}"
+VERSION="{{VERSION}}"
+BASE_URL="https://github.com/${REPO}/releases/download/${VERSION}"
+
+# ---- defaults / flags ----
+UNATTENDED=0
+SERVER=""
+DEVICE_ID=""
+TOKEN=""
+ROLE=""
+INSTALL_DIR="/usr/local/bin"
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --unattended)    UNATTENDED=1 ;;
+    --server)        SERVER="$2"; shift ;;
+    --device-id)     DEVICE_ID="$2"; shift ;;
+    --token)         TOKEN="$2"; shift ;;
+    --role)          ROLE="$2"; shift ;;
+    --install-dir)   INSTALL_DIR="$2"; shift ;;
+    *) echo "unknown flag: $1"; exit 1 ;;
+  esac
+  shift
+done
+
+# env vars override / fill
+SERVER="${SERVER:-$FLEET_SERVER}"
+TOKEN="${TOKEN:-$FLEET_TOKEN}"
+DEVICE_ID="${DEVICE_ID:-$FLEET_DEVICE_ID}"
+
+# ---- arch detection ----
+case "$(uname -m)" in
+  x86_64)  SUFFIX="linux-amd64" ;;
+  aarch64) SUFFIX="linux-arm64" ;;
+  armv7l)  SUFFIX="linux-armv7" ;;
+  *) echo "ERROR: unsupported architecture: $(uname -m)"; exit 1 ;;
+esac
+
+BIN_NAME="fleet-agent-${SUFFIX}"
+BIN_URL="${BASE_URL}/${BIN_NAME}"
+
+# ---- init system detection ----
+if [ -d /run/systemd/system ]; then
+  INIT="systemd"
+elif command -v rc-service >/dev/null 2>&1; then
+  INIT="openrc"
+else
+  INIT="initd"
+fi
+
+# ---- gather config ----
+if [ "$UNATTENDED" -eq 1 ]; then
+  [ -n "$SERVER" ]    || { echo "ERROR: --server required in unattended mode"; exit 1; }
+  [ -n "$TOKEN" ]     || { echo "ERROR: --token required in unattended mode"; exit 1; }
+  [ -n "$DEVICE_ID" ] || { echo "ERROR: --device-id required in unattended mode"; exit 1; }
+else
+  printf "Server address [%s]: " "${SERVER}" ;  read v; SERVER="${v:-$SERVER}"
+  printf "Device ID [%s]: " "${DEVICE_ID}" ;    read v; DEVICE_ID="${v:-$DEVICE_ID}"
+  printf "Token: " ;                            read v; TOKEN="${v:-$TOKEN}"
+  printf "Role label [%s]: " "${ROLE}" ;        read v; ROLE="${v:-$ROLE}"
+  [ -n "$SERVER" ] && [ -n "$TOKEN" ] && [ -n "$DEVICE_ID" ] || {
+    echo "ERROR: server, token, and device-id are required"; exit 1;
+  }
+fi
+
+echo "Installing fleet-agent ${VERSION} (${SUFFIX}, ${INIT})"
+
+# ---- download binary ----
+TMPDIR=$(mktemp -d)
+trap 'rm -rf "$TMPDIR"' EXIT
+
+echo "Downloading ${BIN_URL} ..."
+if command -v curl >/dev/null 2>&1; then
+  curl -fsSL -o "${TMPDIR}/fleet-agent" "${BIN_URL}"
+elif command -v wget >/dev/null 2>&1; then
+  wget -qO "${TMPDIR}/fleet-agent" "${BIN_URL}"
+else
+  echo "ERROR: curl or wget is required"; exit 1
+fi
+
+chmod +x "${TMPDIR}/fleet-agent"
+
+# ---- stop existing service (if upgrading) ----
+case "$INIT" in
+  systemd)  systemctl stop fleet-agent 2>/dev/null || true ;;
+  openrc)   rc-service fleet-agent stop 2>/dev/null || true ;;
+  initd)    service fleet-agent stop 2>/dev/null || true ;;
+esac
+
+# ---- install binary ----
+install -m 755 "${TMPDIR}/fleet-agent" "${INSTALL_DIR}/fleet-agent"
+
+# ---- write config (0600, holds a secret) ----
+install -d -m 755 /etc/fleet-agent
+umask 077
+cat > /etc/fleet-agent/config.yaml <<EOF
+server: ${SERVER}
+token: ${TOKEN}
+device_id: ${DEVICE_ID}
+labels:
+  role: ${ROLE}
+EOF
+chmod 600 /etc/fleet-agent/config.yaml
+
+# ---- register and start service ----
+case "$INIT" in
+  systemd)
+    cat > /etc/systemd/system/fleet-agent.service <<'UNIT'
+[Unit]
+Description=Fleet Agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/fleet-agent run
+Restart=always
+RestartSec=5
+KillMode=process
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+    systemctl daemon-reload
+    systemctl enable --now fleet-agent
+    ;;
+  openrc)
+    cat > /etc/init.d/fleet-agent <<'INITSCRIPT'
+#!/sbin/openrc-run
+name="fleet-agent"
+description="Fleet Agent"
+command="/usr/local/bin/fleet-agent"
+command_args="run"
+command_background=true
+pidfile="/run/${RC_SVCNAME}.pid"
+
+depend() {
+    need net
+    after firewall
+}
+INITSCRIPT
+    chmod +x /etc/init.d/fleet-agent
+    rc-update add fleet-agent default
+    rc-service fleet-agent start
+    ;;
+  initd)
+    cat > /etc/init.d/fleet-agent <<'INITSCRIPT'
+#!/bin/sh
+### BEGIN INIT INFO
+# Provides:          fleet-agent
+# Required-Start:    $network $remote_fs
+# Required-Stop:     $network $remote_fs
+# Default-Start:     2 3 4 5
+# Default-Stop:      0 1 6
+# Description:       Fleet Agent
+### END INIT INFO
+DAEMON=/usr/local/bin/fleet-agent
+DAEMON_ARGS="run"
+PIDFILE=/var/run/fleet-agent.pid
+NAME=fleet-agent
+case "$1" in
+  start)   echo "Starting $NAME"; start-stop-daemon --start --background --make-pidfile --pidfile "$PIDFILE" --exec "$DAEMON" -- $DAEMON_ARGS ;;
+  stop)    echo "Stopping $NAME"; start-stop-daemon --stop --pidfile "$PIDFILE" --retry 10; rm -f "$PIDFILE" ;;
+  restart) $0 stop; $0 start ;;
+  status)  [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null && echo "$NAME is running" || { echo "$NAME is not running"; exit 1; } ;;
+  *)       echo "Usage: $0 {start|stop|restart|status}"; exit 1 ;;
+esac
+INITSCRIPT
+    chmod +x /etc/init.d/fleet-agent
+    update-rc.d fleet-agent defaults
+    service fleet-agent start
+    ;;
+esac
+
+echo ""
+echo "fleet-agent ${VERSION} installed successfully."
+echo "  binary:  ${INSTALL_DIR}/fleet-agent"
+echo "  config:  /etc/fleet-agent/config.yaml"
+echo "  init:    ${INIT}"
+echo "  device:  ${DEVICE_ID}"

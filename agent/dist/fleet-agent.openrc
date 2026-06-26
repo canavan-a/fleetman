@@ -1,0 +1,13 @@
+#!/sbin/openrc-run
+
+name="fleet-agent"
+description="Fleet Agent"
+command="/usr/local/bin/fleet-agent"
+command_args="run"
+command_background=true
+pidfile="/run/${RC_SVCNAME}.pid"
+
+depend() {
+    need net
+    after firewall
+}
