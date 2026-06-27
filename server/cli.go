@@ -87,6 +87,10 @@ func runCLI(adminAddr string, args []string) bool {
 		return true
 
 	default:
+		fmt.Fprintf(os.Stderr, "ERROR: unknown command %q\n\n", args[0])
+		banner.Print(Version)
+		fmt.Print(cliUsage)
+		os.Exit(1)
 		return false
 	}
 }
