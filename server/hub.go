@@ -256,16 +256,9 @@ func (h *Hub) HandlePostCommand(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Build the wire command.
-	cmd := wire.Command{
-		CommandID: commandID,
-		Action:    req.Action,
-		Payload:   req.Payload,
-	}
-	env := wire.Envelope{
-		Type:    wire.TypeCommand,
-		Command: &cmd,
-	}
+	// For upgrade commands: if payload has "version" but not "url", resolve
+	// the binary URL per device based on its arch.
+	resolveUpgradeURL := req.Action == wire.ActionUpgrade && req.Payload["url"] == nil && req.Payload["version"] != nil
 
 	// Send to each target device.
 	sent := 0
@@ -274,6 +267,36 @@ func (h *Hub) HandlePostCommand(w http.ResponseWriter, r *http.Request) {
 		if lc == nil {
 			continue
 		}
+
+		payload := req.Payload
+		if resolveUpgradeURL {
+			info, ok := h.Registry.GetDevice(id)
+			if !ok {
+				log.Printf("skipping upgrade for %s: device not found", id)
+				continue
+			}
+			url, err := upgradeURL(info.Arch, fmt.Sprintf("%v", req.Payload["version"]))
+			if err != nil {
+				log.Printf("skipping upgrade for %s: %v", id, err)
+				continue
+			}
+			payload = make(map[string]interface{}, len(req.Payload))
+			for k, v := range req.Payload {
+				payload[k] = v
+			}
+			payload["url"] = url
+		}
+
+		cmd := wire.Command{
+			CommandID: commandID,
+			Action:    req.Action,
+			Payload:   payload,
+		}
+		env := wire.Envelope{
+			Type:    wire.TypeCommand,
+			Command: &cmd,
+		}
+
 		lc.connMu.Lock()
 		err := lc.conn.WriteJSON(env)
 		lc.connMu.Unlock()

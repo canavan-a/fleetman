@@ -1,0 +1,85 @@
+#!/bin/sh
+set -e
+
+# Fleet Manager Server install script
+# Generated at release time — {{REPO}} and {{VERSION}} are injected by CI.
+#
+# Usage:
+#   curl -fsSL https://github.com/{{REPO}}/releases/latest/download/install-server.sh | sh
+
+REPO="{{REPO}}"
+VERSION="{{VERSION}}"
+BASE_URL="https://github.com/${REPO}/releases/download/${VERSION}"
+
+if [ "$(uname -s)" != "Linux" ]; then
+  echo "ERROR: server install is Linux only"; exit 1
+fi
+
+case "$(uname -m)" in
+  x86_64)        SUFFIX="linux-amd64" ;;
+  aarch64|arm64) SUFFIX="linux-arm64" ;;
+  *) echo "ERROR: unsupported architecture: $(uname -m)"; exit 1 ;;
+esac
+
+if [ "$(id -u)" -ne 0 ]; then
+  echo "ERROR: must be run as root"; exit 1
+fi
+
+BIN_URL="${BASE_URL}/fleetman-server-${SUFFIX}"
+
+echo "Installing fleetman-server ${VERSION} (${SUFFIX}) ..."
+
+# ---- download binary ----
+TMPDIR=$(mktemp -d)
+trap 'rm -rf "$TMPDIR"' EXIT
+
+if command -v curl >/dev/null 2>&1; then
+  curl -fsSL -o "${TMPDIR}/fleetman-server" "${BIN_URL}"
+elif command -v wget >/dev/null 2>&1; then
+  wget -qO "${TMPDIR}/fleetman-server" "${BIN_URL}"
+else
+  echo "ERROR: curl or wget is required"; exit 1
+fi
+
+chmod +x "${TMPDIR}/fleetman-server"
+
+# ---- stop existing service if running ----
+systemctl stop fleetman-server 2>/dev/null || true
+
+# ---- install binary ----
+install -m 755 "${TMPDIR}/fleetman-server" /usr/local/bin/fleetman-server
+
+# ---- install systemd unit ----
+cat > /etc/systemd/system/fleetman-server.service <<'UNIT'
+[Unit]
+Description=Fleet Manager Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/fleetman-server \
+    --addr :8080 \
+    --admin-addr 127.0.0.1:3333 \
+    --db /var/lib/fleetman/fleetman.db
+Restart=always
+RestartSec=5
+KillMode=process
+StateDirectory=fleetman
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+systemctl daemon-reload
+systemctl enable --now fleetman-server
+
+echo ""
+echo "fleetman-server ${VERSION} installed and started."
+echo "  binary:     /usr/local/bin/fleetman-server"
+echo "  db:         /var/lib/fleetman/fleetman.db"
+echo "  public API: :8080"
+echo "  admin API:  127.0.0.1:3333 (localhost only)"
+echo ""
+echo "Create your first master key:"
+echo "  curl -s -X POST localhost:3333/admin/master-keys -d '{\"name\": \"my-key\"}'"

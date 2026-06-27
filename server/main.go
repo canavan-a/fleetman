@@ -1,38 +1,20 @@
 // Package main is the entry point for the fleet-manager server (hub).
-// It boots the HTTP control plane + WebSocket data plane on a single port.
+// It boots the HTTP control plane + WebSocket data plane on a single port,
+// and a localhost-only admin server for managing master API keys.
 package main
 
 import (
 	"flag"
 	"log"
 	"net/http"
-	"os"
-	"strings"
 )
 
 func main() {
-	addr := flag.String("addr", ":8080", "listen address")
-	masterKeys := flag.String("master-keys", "", "comma-separated master API keys (or FLEET_MASTER_KEYS env)")
-	dbPath := flag.String("db", "fleetman.db", "path to SQLite database file (created if missing)")
+	addr      := flag.String("addr", ":8080", "public listen address")
+	adminAddr := flag.String("admin-addr", "127.0.0.1:3333", "admin listen address (localhost only); set empty to disable")
+	dbPath    := flag.String("db", "fleetman.db", "path to SQLite database file (created if missing)")
 	flag.Parse()
 
-	// Master keys from flag or env.
-	keys := *masterKeys
-	if keys == "" {
-		keys = os.Getenv("FLEET_MASTER_KEYS")
-	}
-	if keys == "" {
-		log.Fatal("FATAL: no master API keys configured. Set --master-keys or FLEET_MASTER_KEYS")
-	}
-	keySet := make(map[string]struct{})
-	for _, k := range strings.Split(keys, ",") {
-		k = strings.TrimSpace(k)
-		if k != "" {
-			keySet[k] = struct{}{}
-		}
-	}
-
-	// Open (or create) the database.
 	db, err := OpenDB(*dbPath)
 	if err != nil {
 		log.Fatalf("FATAL: %v", err)
@@ -40,41 +22,52 @@ func main() {
 	defer db.Close()
 
 	registry := NewRegistry(db)
-	cmdStore := NewCommandStore(db)
+	cmdStore  := NewCommandStore(db)
 	hub := &Hub{
 		Registry: registry,
 		Commands: cmdStore,
 	}
 
-	mux := http.NewServeMux()
+	// --- Public API ---
+	mux  := http.NewServeMux()
+	auth := MasterAuth(db)
 
-	// Health check — no auth required.
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("ok\n"))
 	})
 
-	// WebSocket endpoint — device auth happens inside the handler.
 	mux.HandleFunc("GET /ws", hub.HandleWebSocket)
 
-	// Master API endpoints — all require master key auth.
-	auth := MasterAuth(keySet)
-
-	mux.Handle("POST /tokens", auth(http.HandlerFunc(hub.HandleMintToken)))
-	mux.Handle("GET /devices", auth(http.HandlerFunc(hub.HandleListDevices)))
-	mux.Handle("GET /devices/{id}", auth(http.HandlerFunc(hub.HandleGetDevice)))
-	mux.Handle("DELETE /devices/{id}", auth(http.HandlerFunc(hub.HandleDeleteDevice)))
-	mux.Handle("POST /devices/{id}/tags", auth(http.HandlerFunc(hub.HandleAddDeviceTags)))
+	mux.Handle("POST /tokens",                    auth(http.HandlerFunc(hub.HandleMintToken)))
+	mux.Handle("GET /devices",                    auth(http.HandlerFunc(hub.HandleListDevices)))
+	mux.Handle("GET /devices/{id}",               auth(http.HandlerFunc(hub.HandleGetDevice)))
+	mux.Handle("DELETE /devices/{id}",            auth(http.HandlerFunc(hub.HandleDeleteDevice)))
+	mux.Handle("POST /devices/{id}/tags",         auth(http.HandlerFunc(hub.HandleAddDeviceTags)))
 	mux.Handle("DELETE /devices/{id}/tags/{tag}", auth(http.HandlerFunc(hub.HandleRemoveDeviceTag)))
-	mux.Handle("POST /commands", auth(http.HandlerFunc(hub.HandlePostCommand)))
-	mux.Handle("GET /commands/{id}", auth(http.HandlerFunc(hub.HandleGetCommand)))
-	mux.Handle("GET /releases/{arch}", auth(http.HandlerFunc(hub.HandleGetRelease)))
-	mux.Handle("GET /tags", auth(http.HandlerFunc(hub.HandleListTags)))
-	mux.Handle("POST /tags", auth(http.HandlerFunc(hub.HandleCreateTag)))
-	mux.Handle("DELETE /tags/{name}", auth(http.HandlerFunc(hub.HandleDeleteTag)))
-	mux.Handle("GET /tags/{name}/devices", auth(http.HandlerFunc(hub.HandleGetTagDevices)))
-	mux.Handle("POST /tags/{name}/devices", auth(http.HandlerFunc(hub.HandleBulkTag)))
-	mux.Handle("DELETE /tags/{name}/devices", auth(http.HandlerFunc(hub.HandleBulkUntag)))
+	mux.Handle("POST /commands",                  auth(http.HandlerFunc(hub.HandlePostCommand)))
+	mux.Handle("GET /commands/{id}",              auth(http.HandlerFunc(hub.HandleGetCommand)))
+	mux.Handle("GET /releases/{arch}",            auth(http.HandlerFunc(hub.HandleGetRelease)))
+	mux.Handle("GET /tags",                       auth(http.HandlerFunc(hub.HandleListTags)))
+	mux.Handle("POST /tags",                      auth(http.HandlerFunc(hub.HandleCreateTag)))
+	mux.Handle("DELETE /tags/{name}",             auth(http.HandlerFunc(hub.HandleDeleteTag)))
+	mux.Handle("GET /tags/{name}/devices",        auth(http.HandlerFunc(hub.HandleGetTagDevices)))
+	mux.Handle("POST /tags/{name}/devices",       auth(http.HandlerFunc(hub.HandleBulkTag)))
+	mux.Handle("DELETE /tags/{name}/devices",     auth(http.HandlerFunc(hub.HandleBulkUntag)))
+
+	// --- Admin server (localhost only, no auth) ---
+	if *adminAddr != "" {
+		adminMux := http.NewServeMux()
+		admin := &AdminHub{db: db}
+		admin.RegisterAdminRoutes(adminMux)
+
+		go func() {
+			log.Printf("fleet-manager admin listening on %s", *adminAddr)
+			if err := http.ListenAndServe(*adminAddr, adminMux); err != nil {
+				log.Fatalf("FATAL: admin server: %v", err)
+			}
+		}()
+	}
 
 	log.Printf("fleet-manager server listening on %s", *addr)
 	if err := http.ListenAndServe(*addr, mux); err != nil {

@@ -53,6 +53,14 @@ jobs:
           path: dist
           merge-multiple: true
 
+      - name: Generate install-master.sh
+        run: |
+          sed \
+            -e 's|{{REPO}}|${{ github.repository }}|g' \
+            -e 's|{{VERSION}}|${{ github.ref_name }}|g' \
+            scripts/install-master.sh.tmpl > dist/install-master.sh
+          chmod +x dist/install-master.sh
+
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
@@ -62,4 +70,5 @@ jobs:
             dist/fleet-master-linux-armv7
             dist/fleet-master-darwin-amd64
             dist/fleet-master-darwin-arm64
+            dist/install-master.sh
           generate_release_notes: false

@@ -93,9 +93,67 @@ func (db *DB) migrate() error {
 	);
 
 	CREATE INDEX IF NOT EXISTS idx_device_tags_tag ON device_tags(tag);
+
+	CREATE TABLE IF NOT EXISTS master_keys (
+		id         TEXT PRIMARY KEY,
+		name       TEXT NOT NULL,
+		key        TEXT NOT NULL UNIQUE,
+		created_at TEXT NOT NULL
+	);
 	`
 	_, err := db.conn.Exec(schema)
 	return err
+}
+
+// --- Master key operations ---
+
+// MasterKeyInfo is the public view of a master key (key value never returned after creation).
+type MasterKeyInfo struct {
+	ID        string    `json:"id"`
+	Name      string    `json:"name"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// InsertMasterKey stores a new master key.
+func (db *DB) InsertMasterKey(id, name, key string, now time.Time) error {
+	_, err := db.conn.Exec(
+		`INSERT INTO master_keys (id, name, key, created_at) VALUES (?, ?, ?, ?)`,
+		id, name, key, now.Format(time.RFC3339),
+	)
+	return err
+}
+
+// LookupMasterKey returns true if the key exists.
+func (db *DB) LookupMasterKey(key string) bool {
+	var n int
+	db.conn.Get(&n, `SELECT COUNT(*) FROM master_keys WHERE key = ?`, key)
+	return n > 0
+}
+
+// ListMasterKeys returns all master key records (without key values).
+func (db *DB) ListMasterKeys() []MasterKeyInfo {
+	var rows []struct {
+		ID        string `db:"id"`
+		Name      string `db:"name"`
+		CreatedAt string `db:"created_at"`
+	}
+	db.conn.Select(&rows, `SELECT id, name, created_at FROM master_keys ORDER BY created_at`)
+	out := make([]MasterKeyInfo, len(rows))
+	for i, r := range rows {
+		t, _ := time.Parse(time.RFC3339, r.CreatedAt)
+		out[i] = MasterKeyInfo{ID: r.ID, Name: r.Name, CreatedAt: t}
+	}
+	return out
+}
+
+// DeleteMasterKey removes a master key by id. Returns false if not found.
+func (db *DB) DeleteMasterKey(id string) bool {
+	res, err := db.conn.Exec(`DELETE FROM master_keys WHERE id = ?`, id)
+	if err != nil {
+		return false
+	}
+	n, _ := res.RowsAffected()
+	return n > 0
 }
 
 // --- Device operations ---

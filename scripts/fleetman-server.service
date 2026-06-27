@@ -1,0 +1,18 @@
+[Unit]
+Description=Fleet Manager Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/fleetman-server \
+    --addr :8080 \
+    --admin-addr 127.0.0.1:3333 \
+    --db /var/lib/fleetman/fleetman.db
+Restart=always
+RestartSec=5
+KillMode=process
+StateDirectory=fleetman
+
+[Install]
+WantedBy=multi-user.target

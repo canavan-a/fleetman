@@ -60,14 +60,14 @@ jobs:
           path: dist
           merge-multiple: true
 
-      - name: Generate install.sh
+      - name: Generate agent-install.sh and agent-uninstall.sh
         run: |
           sed \
             -e 's|{{REPO}}|${{ github.repository }}|g' \
             -e 's|{{VERSION}}|${{ github.ref_name }}|g' \
-            scripts/install.sh.tmpl > dist/install.sh
-          chmod +x dist/install.sh
-          cp scripts/uninstall.sh dist/uninstall.sh
+            scripts/install.sh.tmpl > dist/agent-install.sh
+          chmod +x dist/agent-install.sh
+          cp scripts/uninstall.sh dist/agent-uninstall.sh
 
       - name: Create release
         uses: softprops/action-gh-release@v2
@@ -83,6 +83,6 @@ jobs:
             dist/fleet-agent-linux-mips64le
             dist/fleet-agent-linux-ppc64le
             dist/fleet-agent-linux-s390x
-            dist/install.sh
-            dist/uninstall.sh
+            dist/agent-install.sh
+            dist/agent-uninstall.sh
           generate_release_notes: true

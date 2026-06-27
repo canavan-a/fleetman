@@ -49,10 +49,19 @@ jobs:
           path: dist
           merge-multiple: true
 
+      - name: Generate install-server.sh
+        run: |
+          sed \
+            -e 's|{{REPO}}|${{ github.repository }}|g' \
+            -e 's|{{VERSION}}|${{ github.ref_name }}|g' \
+            scripts/install-server.sh.tmpl > dist/install-server.sh
+          chmod +x dist/install-server.sh
+
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
           files: |
             dist/fleetman-server-linux-amd64
             dist/fleetman-server-linux-arm64
+            dist/install-server.sh
           generate_release_notes: false

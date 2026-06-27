@@ -1,0 +1,67 @@
+#!/bin/sh
+set -e
+
+# Fleet Master install script
+# Generated at release time — {{REPO}} and {{VERSION}} are injected by CI.
+#
+# Usage (as root):
+#   curl -fsSL https://github.com/{{REPO}}/releases/latest/download/install-master.sh | sh
+#
+# Usage (non-root, installs to ~/.local/bin):
+#   curl -fsSL ... | sh
+#
+# Override install directory:
+#   curl -fsSL ... | INSTALL_DIR=/usr/bin sh
+
+REPO="{{REPO}}"
+VERSION="{{VERSION}}"
+BASE_URL="https://github.com/${REPO}/releases/download/${VERSION}"
+
+# ---- arch detection ----
+case "$(uname -s)" in
+  Darwin) OS="darwin" ;;
+  Linux)  OS="linux"  ;;
+  *) echo "ERROR: unsupported OS: $(uname -s)"; exit 1 ;;
+esac
+
+case "$(uname -m)" in
+  x86_64)       ARCH="amd64" ;;
+  aarch64|arm64) ARCH="arm64" ;;
+  armv7l)       ARCH="armv7" ;;
+  *) echo "ERROR: unsupported architecture: $(uname -m)"; exit 1 ;;
+esac
+
+SUFFIX="${OS}-${ARCH}"
+BIN_URL="${BASE_URL}/fleet-master-${SUFFIX}"
+
+# ---- install directory ----
+if [ -n "$INSTALL_DIR" ]; then
+  : # use provided value
+elif [ "$(id -u)" -eq 0 ]; then
+  INSTALL_DIR="/usr/local/bin"
+else
+  INSTALL_DIR="$HOME/.local/bin"
+fi
+
+mkdir -p "$INSTALL_DIR"
+
+echo "Installing fleet-master ${VERSION} (${SUFFIX}) to ${INSTALL_DIR} ..."
+
+# ---- download ----
+TMPDIR=$(mktemp -d)
+trap 'rm -rf "$TMPDIR"' EXIT
+
+if command -v curl >/dev/null 2>&1; then
+  curl -fsSL -o "${TMPDIR}/fleet-master" "${BIN_URL}"
+elif command -v wget >/dev/null 2>&1; then
+  wget -qO "${TMPDIR}/fleet-master" "${BIN_URL}"
+else
+  echo "ERROR: curl or wget is required"; exit 1
+fi
+
+chmod +x "${TMPDIR}/fleet-master"
+install -m 755 "${TMPDIR}/fleet-master" "${INSTALL_DIR}/fleet-master"
+
+echo ""
+echo "fleet-master ${VERSION} installed to ${INSTALL_DIR}/fleet-master"
+echo "Run: fleet-master"
