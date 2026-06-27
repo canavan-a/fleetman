@@ -30,6 +30,7 @@ jobs:
           CGO_ENABLED: "0"
         run: |
           go build \
+            -ldflags "-X main.Version=${{ github.ref_name }} -X main.Repo=${{ github.repository }}" \
             -o dist/fleetman-server-${{ matrix.suffix }} \
             ./server
       - uses: actions/upload-artifact@v4

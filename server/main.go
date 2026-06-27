@@ -5,15 +5,27 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"log"
 	"net/http"
 )
 
 func main() {
-	addr      := flag.String("addr", ":8080", "public listen address")
-	adminAddr := flag.String("admin-addr", "127.0.0.1:3333", "admin listen address (localhost only); set empty to disable")
-	dbPath    := flag.String("db", "fleetman.db", "path to SQLite database file (created if missing)")
+	addr        := flag.String("addr", ":8080", "public listen address")
+	adminAddr   := flag.String("admin-addr", "127.0.0.1:3333", "admin listen address (localhost only); set empty to disable")
+	dbPath      := flag.String("db", "fleetman.db", "path to SQLite database file (created if missing)")
+	showVersion := flag.Bool("version", false, "print version and exit")
+	flag.Usage   = func() { fmt.Print(cliUsage) }
 	flag.Parse()
+
+	if *showVersion {
+		fmt.Printf("fleetman-server %s\n", Version)
+		return
+	}
+
+	if runCLI(*adminAddr, flag.Args()) {
+		return
+	}
 
 	db, err := OpenDB(*dbPath)
 	if err != nil {
