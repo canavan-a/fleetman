@@ -11,6 +11,8 @@ import (
 	"strings"
 	"text/tabwriter"
 	"time"
+
+	"github.com/canavan-a/fleetman/internal/banner"
 )
 
 const cliUsage = `Usage: fleetman-server [flags] [command]
@@ -79,6 +81,7 @@ func runCLI(adminAddr string, args []string) bool {
 		return true
 
 	case "help", "--help", "-h":
+		banner.Print(Version)
 		fmt.Print(cliUsage)
 		os.Exit(0)
 		return true

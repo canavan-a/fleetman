@@ -8,6 +8,9 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
+
+	"github.com/canavan-a/fleetman/internal/banner"
 )
 
 func main() {
@@ -15,8 +18,14 @@ func main() {
 	adminAddr   := flag.String("admin-addr", "127.0.0.1:3333", "admin listen address (localhost only); set empty to disable")
 	dbPath      := flag.String("db", "fleetman.db", "path to SQLite database file (created if missing)")
 	showVersion := flag.Bool("version", false, "print version and exit")
-	flag.Usage   = func() { fmt.Print(cliUsage) }
+	flag.Usage = func() { fmt.Print(cliUsage) }
 	flag.Parse()
+
+	if len(os.Args) == 1 {
+		banner.Print(Version)
+		fmt.Print(cliUsage)
+		return
+	}
 
 	if *showVersion {
 		fmt.Printf("fleetman-server %s\n", Version)
@@ -81,6 +90,7 @@ func main() {
 		}()
 	}
 
+	banner.Print(Version)
 	log.Printf("fleet-manager server listening on %s", *addr)
 	if err := http.ListenAndServe(*addr, mux); err != nil {
 		log.Fatalf("FATAL: %v", err)
