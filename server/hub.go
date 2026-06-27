@@ -154,6 +154,24 @@ func (h *Hub) HandleMintToken(w http.ResponseWriter, r *http.Request) {
 	log.Printf("minted token for device %s", deviceID)
 }
 
+// HandleGetDevice handles GET /devices/{id}.
+func (h *Hub) HandleGetDevice(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		http.Error(w, `{"error":"missing device id"}`, http.StatusBadRequest)
+		return
+	}
+
+	info, ok := h.Registry.GetDevice(id)
+	if !ok {
+		http.Error(w, `{"error":"device not found"}`, http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(info)
+}
+
 // HandleListDevices handles GET /devices.
 func (h *Hub) HandleListDevices(w http.ResponseWriter, r *http.Request) {
 	devices := h.Registry.ListDevices()
@@ -277,8 +295,18 @@ func (h *Hub) HandlePostCommand(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// enrichedResult is a DeviceResult with device metadata joined in.
+type enrichedResult struct {
+	DeviceID string       `json:"device_id"`
+	Status   string       `json:"status"`
+	Stdout   string       `json:"stdout,omitempty"`
+	Stderr   string       `json:"stderr,omitempty"`
+	Retcode  int          `json:"retcode,omitempty"`
+	Device   *DeviceInfo  `json:"device,omitempty"`
+}
+
 // HandleGetCommand handles GET /commands/{id}.
-// Returns collected results so far (poll until complete or timeout).
+// Returns collected results so far with device metadata joined into each entry.
 func (h *Hub) HandleGetCommand(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if id == "" {
@@ -292,9 +320,10 @@ func (h *Hub) HandleGetCommand(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Compute summary.
+	// Compute summary and build enriched results with device info joined.
 	pending, completed, failed, timedOut := 0, 0, 0, 0
-	for _, dr := range rec.Results {
+	enriched := make(map[string]*enrichedResult, len(rec.Results))
+	for deviceID, dr := range rec.Results {
 		switch dr.Status {
 		case "pending":
 			pending++
@@ -305,6 +334,18 @@ func (h *Hub) HandleGetCommand(w http.ResponseWriter, r *http.Request) {
 		case "timeout":
 			timedOut++
 		}
+
+		er := &enrichedResult{
+			DeviceID: dr.DeviceID,
+			Status:   dr.Status,
+			Stdout:   dr.Stdout,
+			Stderr:   dr.Stderr,
+			Retcode:  dr.Retcode,
+		}
+		if info, ok := h.Registry.GetDevice(deviceID); ok {
+			er.Device = &info
+		}
+		enriched[deviceID] = er
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -320,7 +361,7 @@ func (h *Hub) HandleGetCommand(w http.ResponseWriter, r *http.Request) {
 			"failed":    failed,
 			"timeout":   timedOut,
 		},
-		"results": rec.Results,
+		"results": enriched,
 	})
 }
 
@@ -367,6 +408,29 @@ func (h *Hub) HandleListTags(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"tags": tags,
+	})
+}
+
+// HandleGetTagDevices handles GET /tags/{name}/devices.
+// Returns all devices that have the given tag.
+func (h *Hub) HandleGetTagDevices(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if name == "" {
+		http.Error(w, `{"error":"missing tag name"}`, http.StatusBadRequest)
+		return
+	}
+
+	if !h.Registry.db.TagExists(name) {
+		http.Error(w, `{"error":"tag not found"}`, http.StatusNotFound)
+		return
+	}
+
+	deviceIDs := h.Registry.db.GetDevicesByTag(name)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"tag":        name,
+		"device_ids": deviceIDs,
 	})
 }
 

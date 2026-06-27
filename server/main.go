@@ -62,6 +62,7 @@ func main() {
 
 	mux.Handle("POST /tokens", auth(http.HandlerFunc(hub.HandleMintToken)))
 	mux.Handle("GET /devices", auth(http.HandlerFunc(hub.HandleListDevices)))
+	mux.Handle("GET /devices/{id}", auth(http.HandlerFunc(hub.HandleGetDevice)))
 	mux.Handle("DELETE /devices/{id}", auth(http.HandlerFunc(hub.HandleDeleteDevice)))
 	mux.Handle("POST /devices/{id}/tags", auth(http.HandlerFunc(hub.HandleAddDeviceTags)))
 	mux.Handle("DELETE /devices/{id}/tags/{tag}", auth(http.HandlerFunc(hub.HandleRemoveDeviceTag)))
@@ -71,6 +72,7 @@ func main() {
 	mux.Handle("GET /tags", auth(http.HandlerFunc(hub.HandleListTags)))
 	mux.Handle("POST /tags", auth(http.HandlerFunc(hub.HandleCreateTag)))
 	mux.Handle("DELETE /tags/{name}", auth(http.HandlerFunc(hub.HandleDeleteTag)))
+	mux.Handle("GET /tags/{name}/devices", auth(http.HandlerFunc(hub.HandleGetTagDevices)))
 	mux.Handle("POST /tags/{name}/devices", auth(http.HandlerFunc(hub.HandleBulkTag)))
 	mux.Handle("DELETE /tags/{name}/devices", auth(http.HandlerFunc(hub.HandleBulkUntag)))
 
