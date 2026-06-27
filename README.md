@@ -104,7 +104,14 @@ curl -fsSL https://github.com/canavan-a/fleetman/releases/latest/download/agent-
 curl -fsSL https://github.com/canavan-a/fleetman/releases/latest/download/install-server.sh | sh
 ```
 
-Requires root. Installs the binary to `/usr/local/bin`, writes a systemd unit, and starts the service. The SQLite database is created automatically at `/var/lib/fleetman/fleetman.db`.
+Requires root. Prompts for public port and admin port (defaults `:8080` and `127.0.0.1:3333`), then installs the binary, writes a systemd unit, and starts the service. The SQLite database is created automatically at `/var/lib/fleetman/fleetman.db`.
+
+For unattended installs pass flags directly:
+
+```sh
+curl -fsSL https://github.com/canavan-a/fleetman/releases/latest/download/install-server.sh | \
+  sh -s -- --addr :9090 --admin-addr 127.0.0.1:4444
+```
 
 Or with Nix:
 

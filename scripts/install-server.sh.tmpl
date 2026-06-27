@@ -4,12 +4,30 @@ set -e
 # Fleet Manager Server install script
 # Generated at release time — {{REPO}} and {{VERSION}} are injected by CI.
 #
-# Usage:
+# Usage (interactive):
 #   curl -fsSL https://github.com/{{REPO}}/releases/latest/download/install-server.sh | sh
+#
+# Usage (unattended):
+#   curl -fsSL ... | sh -s -- --addr :8080 --admin-addr 127.0.0.1:3333
 
 REPO="{{REPO}}"
 VERSION="{{VERSION}}"
 BASE_URL="https://github.com/${REPO}/releases/download/${VERSION}"
+
+# ---- defaults ----
+ADDR=""
+ADMIN_ADDR=""
+UNATTENDED=0
+
+# ---- parse flags ----
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --addr)        ADDR="$2";       shift 2 ;;
+    --admin-addr)  ADMIN_ADDR="$2"; shift 2 ;;
+    --unattended)  UNATTENDED=1;    shift   ;;
+    *) echo "Unknown flag: $1"; exit 1 ;;
+  esac
+done
 
 if [ "$(uname -s)" != "Linux" ]; then
   echo "ERROR: server install is Linux only"; exit 1
@@ -23,6 +41,20 @@ esac
 
 if [ "$(id -u)" -ne 0 ]; then
   echo "ERROR: must be run as root"; exit 1
+fi
+
+# ---- prompt for ports if not provided and not unattended ----
+if [ "$UNATTENDED" = "0" ]; then
+  printf "Public listen address [default: :8080]: "
+  read -r INPUT
+  ADDR="${INPUT:-${ADDR:-:8080}}"
+
+  printf "Admin listen address  [default: 127.0.0.1:3333]: "
+  read -r INPUT
+  ADMIN_ADDR="${INPUT:-${ADMIN_ADDR:-127.0.0.1:3333}}"
+else
+  ADDR="${ADDR:-:8080}"
+  ADMIN_ADDR="${ADMIN_ADDR:-127.0.0.1:3333}"
 fi
 
 BIN_URL="${BASE_URL}/fleetman-server-${SUFFIX}"
@@ -49,8 +81,13 @@ systemctl stop fleetman-server 2>/dev/null || true
 # ---- install binary ----
 install -m 755 "${TMPDIR}/fleetman-server" /usr/local/bin/fleetman-server
 
-# ---- install systemd unit ----
-cat > /etc/systemd/system/fleetman-server.service <<'UNIT'
+# ---- write systemd unit with chosen ports ----
+EXEC_START="/usr/local/bin/fleetman-server --addr ${ADDR} --db /var/lib/fleetman/fleetman.db"
+if [ -n "$ADMIN_ADDR" ]; then
+  EXEC_START="${EXEC_START} --admin-addr ${ADMIN_ADDR}"
+fi
+
+cat > /etc/systemd/system/fleetman-server.service <<UNIT
 [Unit]
 Description=Fleet Manager Server
 After=network-online.target
@@ -58,10 +95,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/fleetman-server \
-    --addr :8080 \
-    --admin-addr 127.0.0.1:3333 \
-    --db /var/lib/fleetman/fleetman.db
+ExecStart=${EXEC_START}
 Restart=always
 RestartSec=5
 KillMode=process
@@ -78,8 +112,8 @@ echo ""
 echo "fleetman-server ${VERSION} installed and started."
 echo "  binary:     /usr/local/bin/fleetman-server"
 echo "  db:         /var/lib/fleetman/fleetman.db"
-echo "  public API: :8080"
-echo "  admin API:  127.0.0.1:3333 (localhost only)"
+echo "  public API: ${ADDR}"
+echo "  admin API:  ${ADMIN_ADDR} (localhost only)"
 echo ""
 echo "Create your first master key:"
-echo "  curl -s -X POST localhost:3333/admin/master-keys -d '{\"name\": \"my-key\"}'"
+echo "  curl -s -X POST ${ADMIN_ADDR}/admin/master-keys -d '{\"name\": \"my-key\"}'"
