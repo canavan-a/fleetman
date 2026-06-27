@@ -78,20 +78,20 @@ On first run, `fleet-master` prompts for your server URL and master API key and 
 ### Install
 
 ```sh
-curl -fsSL https://github.com/canavan-a/fleetman/releases/latest/download/agent-install.sh | sh
+curl -fsSL https://github.com/canavan-a/fleetman/releases/latest/download/agent-install.sh | sudo sh
 ```
 
 Or unattended (for automation / image-baking):
 
 ```sh
 curl -fsSL https://github.com/canavan-a/fleetman/releases/latest/download/agent-install.sh | \
-  sh -s -- --unattended --server wss://your-server:8080 --token <token> --device-id <dev-id>
+  sudo sh -s -- --unattended --server wss://your-server:8080 --token <token> --device-id <dev-id>
 ```
 
 To uninstall:
 
 ```sh
-curl -fsSL https://github.com/canavan-a/fleetman/releases/latest/download/agent-uninstall.sh | sh
+curl -fsSL https://github.com/canavan-a/fleetman/releases/latest/download/agent-uninstall.sh | sudo sh
 ```
 
 ---
@@ -101,7 +101,7 @@ curl -fsSL https://github.com/canavan-a/fleetman/releases/latest/download/agent-
 ### Install
 
 ```sh
-curl -fsSL https://github.com/canavan-a/fleetman/releases/latest/download/install-server.sh | sh
+curl -fsSL https://github.com/canavan-a/fleetman/releases/latest/download/install-server.sh | sudo sh
 ```
 
 Requires root. Prompts for public port and admin port (defaults `:8080` and `127.0.0.1:3333`), then installs the binary, writes a systemd unit, and starts the service. The SQLite database is created automatically at `/var/lib/fleetman/fleetman.db`.
@@ -110,7 +110,7 @@ For unattended installs pass flags directly:
 
 ```sh
 curl -fsSL https://github.com/canavan-a/fleetman/releases/latest/download/install-server.sh | \
-  sh -s -- --addr :9090 --admin-addr 127.0.0.1:4444
+  sudo sh -s -- --addr :9090 --admin-addr 127.0.0.1:4444
 ```
 
 Or with Nix:

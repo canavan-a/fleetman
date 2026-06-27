@@ -5,10 +5,10 @@ set -e
 # Generated at release time — {{REPO}} and {{VERSION}} are injected by CI.
 #
 # Usage (interactive):
-#   curl -fsSL https://github.com/{{REPO}}/releases/latest/download/install-server.sh | sh
+#   curl -fsSL https://github.com/{{REPO}}/releases/latest/download/install-server.sh | sudo sh
 #
 # Usage (unattended):
-#   curl -fsSL ... | sh -s -- --addr :8080 --admin-addr 127.0.0.1:3333
+#   curl -fsSL ... | sudo sh -s -- --addr :8080 --admin-addr 127.0.0.1:3333
 
 REPO="{{REPO}}"
 VERSION="{{VERSION}}"
@@ -45,12 +45,12 @@ fi
 
 # ---- prompt for ports if not provided and not unattended ----
 if [ "$UNATTENDED" = "0" ]; then
-  printf "Public listen address [default: :8080]: "
-  read -r INPUT
+  printf "Public listen address [default: :8080]: " > /dev/tty
+  read -r INPUT < /dev/tty
   ADDR="${INPUT:-${ADDR:-:8080}}"
 
-  printf "Admin listen address  [default: 127.0.0.1:3333]: "
-  read -r INPUT
+  printf "Admin listen address  [default: 127.0.0.1:3333]: " > /dev/tty
+  read -r INPUT < /dev/tty
   ADMIN_ADDR="${INPUT:-${ADMIN_ADDR:-127.0.0.1:3333}}"
 else
   ADDR="${ADDR:-:8080}"

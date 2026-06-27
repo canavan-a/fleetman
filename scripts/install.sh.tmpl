@@ -5,9 +5,9 @@ set -e
 # Generated at release time — {{REPO}} and {{VERSION}} are injected by CI.
 #
 # Usage:
-#   curl -fsSL https://github.com/{{REPO}}/releases/latest/download/install.sh | sh
-#   curl -fsSL ... | sh -s -- --server wss://... --token abc --device-id dev-123
-#   curl -fsSL ... | sh -s -- --unattended --server wss://... --token abc --device-id dev-123
+#   curl -fsSL https://github.com/{{REPO}}/releases/latest/download/agent-install.sh | sudo sh
+#   curl -fsSL ... | sudo sh -s -- --server wss://... --token abc --device-id dev-123
+#   curl -fsSL ... | sudo sh -s -- --unattended --server wss://... --token abc --device-id dev-123
 
 REPO="{{REPO}}"
 VERSION="{{VERSION}}"
