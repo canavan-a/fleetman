@@ -119,10 +119,10 @@ if [ "$UNATTENDED" -eq 1 ]; then
   [ -n "$TOKEN" ]     || { echo "ERROR: --token required in unattended mode"; exit 1; }
   [ -n "$DEVICE_ID" ] || { echo "ERROR: --device-id required in unattended mode"; exit 1; }
 else
-  printf "Server address [%s]: " "${SERVER}" ;  read v; SERVER="${v:-$SERVER}"
-  printf "Device ID [%s]: " "${DEVICE_ID}" ;    read v; DEVICE_ID="${v:-$DEVICE_ID}"
-  printf "Token: " ;                            read v; TOKEN="${v:-$TOKEN}"
-  printf "Role label [%s]: " "${ROLE}" ;        read v; ROLE="${v:-$ROLE}"
+  printf "Server address [%s]: " "${SERVER}" ;  read v < /dev/tty; SERVER="${v:-$SERVER}"
+  printf "Device ID [%s]: " "${DEVICE_ID}" ;    read v < /dev/tty; DEVICE_ID="${v:-$DEVICE_ID}"
+  printf "Token: " ;                            read v < /dev/tty; TOKEN="${v:-$TOKEN}"
+  printf "Role label [%s]: " "${ROLE}" ;        read v < /dev/tty; ROLE="${v:-$ROLE}"
   [ -n "$SERVER" ] && [ -n "$TOKEN" ] && [ -n "$DEVICE_ID" ] || {
     echo "ERROR: server, token, and device-id are required"; exit 1;
   }
