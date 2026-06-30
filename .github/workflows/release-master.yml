@@ -34,7 +34,7 @@ jobs:
           CGO_ENABLED: "0"
         run: |
           go build \
-            -o dist/fleet-master-${{ matrix.suffix }} \
+            -o dist/fleetman-${{ matrix.suffix }} \
             ./master
       - uses: actions/upload-artifact@v4
         with:
@@ -65,10 +65,10 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            dist/fleet-master-linux-amd64
-            dist/fleet-master-linux-arm64
-            dist/fleet-master-linux-armv7
-            dist/fleet-master-darwin-amd64
-            dist/fleet-master-darwin-arm64
+            dist/fleetman-linux-amd64
+            dist/fleetman-linux-arm64
+            dist/fleetman-linux-armv7
+            dist/fleetman-darwin-amd64
+            dist/fleetman-darwin-arm64
             dist/install-master.sh
           generate_release_notes: false

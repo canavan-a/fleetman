@@ -24,6 +24,7 @@ Service flags (daemon mode — no command given):
   --version            Print version and exit
 
 Commands (CLI mode — run on the server directly or via SSH):
+  info                 Show server addresses and version
   keys list            List all master API keys
   keys add <name>      Create a new master API key (key shown once)
   keys revoke <id>     Revoke a master API key by ID
@@ -45,6 +46,10 @@ func runCLI(adminAddr string, args []string) bool {
 	base := "http://" + adminAddr
 
 	switch args[0] {
+	case "info":
+		cliInfo(base)
+		return true
+
 	case "upgrade":
 		runUpgrade(args[1:])
 		return true
@@ -93,6 +98,23 @@ func runCLI(adminAddr string, args []string) bool {
 		os.Exit(1)
 		return false
 	}
+}
+
+func cliInfo(base string) {
+	body := adminRequest("GET", base+"/admin/info", nil)
+
+	var resp struct {
+		Addr      string `json:"addr"`
+		AdminAddr string `json:"admin_addr"`
+		Version   string `json:"version"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		fatalf("failed to parse response: %v", err)
+	}
+
+	fmt.Printf("Version:     %s\n", resp.Version)
+	fmt.Printf("Server addr: %s\n", resp.Addr)
+	fmt.Printf("Admin addr:  %s\n", resp.AdminAddr)
 }
 
 func cliKeysList(base string) {

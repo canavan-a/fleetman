@@ -32,7 +32,7 @@ case "$(uname -m)" in
 esac
 
 SUFFIX="${OS}-${ARCH}"
-BIN_URL="${BASE_URL}/fleet-master-${SUFFIX}"
+BIN_URL="${BASE_URL}/fleetman-${SUFFIX}"
 
 # ---- install directory ----
 if [ -n "$INSTALL_DIR" ]; then
@@ -45,23 +45,23 @@ fi
 
 mkdir -p "$INSTALL_DIR"
 
-echo "Installing fleet-master ${VERSION} (${SUFFIX}) to ${INSTALL_DIR} ..."
+echo "Installing fleetman ${VERSION} (${SUFFIX}) to ${INSTALL_DIR} ..."
 
 # ---- download ----
 TMPDIR=$(mktemp -d)
 trap 'rm -rf "$TMPDIR"' EXIT
 
 if command -v curl >/dev/null 2>&1; then
-  curl -fsSL -o "${TMPDIR}/fleet-master" "${BIN_URL}"
+  curl -fsSL -o "${TMPDIR}/fleetman" "${BIN_URL}"
 elif command -v wget >/dev/null 2>&1; then
-  wget -qO "${TMPDIR}/fleet-master" "${BIN_URL}"
+  wget -qO "${TMPDIR}/fleetman" "${BIN_URL}"
 else
   echo "ERROR: curl or wget is required"; exit 1
 fi
 
-chmod +x "${TMPDIR}/fleet-master"
-install -m 755 "${TMPDIR}/fleet-master" "${INSTALL_DIR}/fleet-master"
+chmod +x "${TMPDIR}/fleetman"
+install -m 755 "${TMPDIR}/fleetman" "${INSTALL_DIR}/fleetman"
 
 echo ""
-echo "fleet-master ${VERSION} installed to ${INSTALL_DIR}/fleet-master"
-echo "Run: fleet-master"
+echo "fleetman ${VERSION} installed to ${INSTALL_DIR}/fleetman"
+echo "Run: fleetman"

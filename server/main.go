@@ -79,7 +79,7 @@ func main() {
 	// --- Admin server (localhost only, no auth) ---
 	if *adminAddr != "" {
 		adminMux := http.NewServeMux()
-		admin := &AdminHub{db: db}
+		admin := &AdminHub{db: db, Addr: *addr, AdminAddr: *adminAddr}
 		admin.RegisterAdminRoutes(adminMux)
 
 		go func() {

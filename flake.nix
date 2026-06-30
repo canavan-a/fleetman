@@ -26,8 +26,8 @@
         in
         {
           packages = {
-            default         = self.packages.${system}.fleet-master;
-            fleet-master    = mkFleetPkg { pname = "fleet-master";  subPackage = "master"; };
+            default         = self.packages.${system}.fleetman;
+            fleetman        = mkFleetPkg { pname = "fleetman";        subPackage = "master"; };
             fleetman-server = mkFleetPkg { pname = "fleetman-server"; subPackage = "server"; };
           };
 

@@ -11,14 +11,28 @@ import (
 
 // AdminHub exposes the admin-only HTTP handlers (local port, no auth).
 type AdminHub struct {
-	db *DB
+	db        *DB
+	Addr      string // public listen address
+	AdminAddr string // admin listen address
 }
 
 // RegisterAdminRoutes wires admin endpoints onto mux.
 func (a *AdminHub) RegisterAdminRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("GET /admin/info", a.HandleInfo)
 	mux.HandleFunc("GET /admin/master-keys", a.HandleListMasterKeys)
 	mux.HandleFunc("POST /admin/master-keys", a.HandleCreateMasterKey)
 	mux.HandleFunc("DELETE /admin/master-keys/{id}", a.HandleDeleteMasterKey)
+}
+
+// HandleInfo handles GET /admin/info.
+// Returns the public and admin listen addresses.
+func (a *AdminHub) HandleInfo(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"addr":       a.Addr,
+		"admin_addr": a.AdminAddr,
+		"version":    Version,
+	})
 }
 
 // HandleListMasterKeys handles GET /admin/master-keys.
