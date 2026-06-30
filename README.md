@@ -47,7 +47,7 @@ outputs = { self, nixpkgs, fleetman, ... }: {
     modules = [
       ({ pkgs, ... }: {
         environment.systemPackages = [
-          fleetman.packages.${pkgs.system}.fleet-master
+          fleetman.packages.${pkgs.system}.fleetman
         ];
       })
     ];
@@ -64,12 +64,12 @@ inputs.fleetman.url = "github:canavan-a/fleetman/v1.2.3";
 ### Usage
 
 ```sh
-fleet-master          # opens TUI login if not configured, then main view
-fleet-master login    # re-authenticate (prompts for server URL + master key)
-fleet-master logout   # clear saved credentials
+fleetman          # opens TUI login if not configured, then main view
+fleetman login    # re-authenticate (prompts for server URL + master key)
+fleetman logout   # clear saved credentials
 ```
 
-On first run, `fleet-master` prompts for your server URL and master API key and saves them to `~/.fleetman/config.yaml`.
+On first run, `fleetman` prompts for your server URL and master API key and saves them to `~/.fleetman/config.yaml`.
 
 ---
 
@@ -150,7 +150,7 @@ curl -s -X POST localhost:3333/admin/master-keys -d '{"name": "my-laptop"}'
 # → {"id": "...", "name": "my-laptop", "key": "abc123...", "created_at": "..."}
 ```
 
-Save the returned key — it is shown only once. Use it as your master API key in `fleet-master`.
+Save the returned key — it is shown only once. Use it as your master API key in `fleetman`.
 
 ### Managing master keys
 
