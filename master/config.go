@@ -16,15 +16,74 @@ const (
 	configDirPerm  = 0700
 )
 
+// defaultRepo is the GitHub "owner/repo" used to build install-script URLs
+// when none is configured. Most users run this fork, so it's the sane default.
+const defaultRepo = "canavan-a/fleetman"
+
 // Config holds the master CLI configuration.
+//
+// Server is stored as a bare host ("fleetman.example.com" or "host:port"),
+// never a scheme-prefixed URL — the scheme is implied secure (https/wss)
+// unless Insecure is set. A scheme typed by the user (http://, ws://, ...)
+// is treated as an explicit opt-in to plaintext and normalized away into
+// Insecure=true so the stored form stays scheme-free everywhere.
 type Config struct {
 	Server    string `yaml:"server"`
+	Insecure  bool   `yaml:"insecure,omitempty"`
 	MasterKey string `yaml:"master_key"`
+	Repo      string `yaml:"repo,omitempty"` // GitHub "owner/repo" for install-script URLs
 }
 
 // IsComplete reports whether the config has all required fields.
 func (c *Config) IsComplete() bool {
 	return c != nil && strings.TrimSpace(c.Server) != "" && strings.TrimSpace(c.MasterKey) != ""
+}
+
+// EffectiveRepo returns the configured repo, falling back to defaultRepo.
+func (c *Config) EffectiveRepo() string {
+	if c != nil && strings.TrimSpace(c.Repo) != "" {
+		return strings.TrimSpace(c.Repo)
+	}
+	return defaultRepo
+}
+
+// BaseURL returns the full scheme-prefixed URL the master's HTTP API client
+// should use: https:// unless Insecure is set.
+func (c *Config) BaseURL() string {
+	scheme := "https"
+	if c.Insecure {
+		scheme = "http"
+	}
+	return scheme + "://" + c.Server
+}
+
+// normalizeServer splits a user-entered server value into a bare host and
+// an insecure flag. An explicit http:// or ws:// prefix opts into
+// plaintext; https://, wss://, or no scheme at all all mean secure.
+func normalizeServer(raw string) (host string, insecure bool) {
+	raw = strings.TrimRight(strings.TrimSpace(raw), "/")
+	switch {
+	case strings.HasPrefix(raw, "https://"):
+		return strings.TrimPrefix(raw, "https://"), false
+	case strings.HasPrefix(raw, "wss://"):
+		return strings.TrimPrefix(raw, "wss://"), false
+	case strings.HasPrefix(raw, "http://"):
+		return strings.TrimPrefix(raw, "http://"), true
+	case strings.HasPrefix(raw, "ws://"):
+		return strings.TrimPrefix(raw, "ws://"), true
+	default:
+		return raw, insecure
+	}
+}
+
+// setServer normalizes and applies a user-entered server value, folding any
+// explicit scheme into c.Insecure rather than storing it in c.Server.
+func (c *Config) setServer(raw string) {
+	host, insecure := normalizeServer(raw)
+	c.Server = host
+	if insecure {
+		c.Insecure = true
+	}
 }
 
 // defaultConfigPath returns ~/.fleetman/config.yaml.
@@ -62,6 +121,8 @@ func LoadConfig(path string) (*Config, error) {
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("parse config: %w", err)
 	}
+	// Migrate any older scheme-prefixed server value stored on disk.
+	cfg.setServer(cfg.Server)
 	return &cfg, nil
 }
 
@@ -92,7 +153,9 @@ func DeleteConfig(path string) error {
 // LoginFlags holds flag values that can pre-fill or bypass the login prompt.
 type LoginFlags struct {
 	Server    string // --server
+	Insecure  bool   // --insecure
 	MasterKey string // --master-key
+	Repo      string // --repo
 }
 
 // PromptLogin interactively collects credentials, skipping any field already
@@ -110,7 +173,7 @@ func PromptLogin(path string, flags LoginFlags) (*Config, error) {
 	if server == "" {
 		fmt.Println("Fleet manager credentials required.")
 		fmt.Println()
-		server = promptLine("Server URL", existing.Server)
+		server = promptLine("Server (host, e.g. fleetman.example.com)", existing.Server)
 	}
 	if masterKey == "" {
 		fmt.Printf("  Master API key: ")
@@ -125,9 +188,16 @@ func PromptLogin(path string, flags LoginFlags) (*Config, error) {
 		return nil, fmt.Errorf("server and master key are required")
 	}
 
-	cfg := &Config{
-		Server:    strings.TrimRight(strings.TrimSpace(server), "/"),
-		MasterKey: strings.TrimSpace(masterKey),
+	cfg := &Config{MasterKey: strings.TrimSpace(masterKey)}
+	cfg.setServer(server)
+	if flags.Insecure {
+		cfg.Insecure = true
+	} else if existing.Insecure {
+		cfg.Insecure = true
+	}
+	cfg.Repo = strings.TrimSpace(flags.Repo)
+	if cfg.Repo == "" {
+		cfg.Repo = strings.TrimSpace(existing.Repo)
 	}
 
 	if err := SaveConfig(path, cfg); err != nil {
@@ -143,10 +213,12 @@ func PromptLogin(path string, flags LoginFlags) (*Config, error) {
 func LoadOrPrompt(path string, flags LoginFlags) (*Config, error) {
 	// If both values supplied via flags, skip the file entirely.
 	if flags.Server != "" && flags.MasterKey != "" {
-		return &Config{
-			Server:    strings.TrimRight(strings.TrimSpace(flags.Server), "/"),
-			MasterKey: strings.TrimSpace(flags.MasterKey),
-		}, nil
+		cfg := &Config{MasterKey: strings.TrimSpace(flags.MasterKey), Repo: strings.TrimSpace(flags.Repo)}
+		cfg.setServer(flags.Server)
+		if flags.Insecure {
+			cfg.Insecure = true
+		}
+		return cfg, nil
 	}
 
 	cfg, err := LoadConfig(path)
@@ -157,10 +229,13 @@ func LoadOrPrompt(path string, flags LoginFlags) (*Config, error) {
 	if cfg.IsComplete() {
 		// Apply flag overrides on top of file values.
 		if flags.Server != "" {
-			cfg.Server = strings.TrimRight(strings.TrimSpace(flags.Server), "/")
+			cfg.setServer(flags.Server)
 		}
 		if flags.MasterKey != "" {
 			cfg.MasterKey = strings.TrimSpace(flags.MasterKey)
+		}
+		if flags.Insecure {
+			cfg.Insecure = true
 		}
 		return cfg, nil
 	}

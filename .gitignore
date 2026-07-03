@@ -1,6 +1,9 @@
 # Build output
 /dist/
 
+# Local dev rebuild script (not part of the release pipeline)
+/scripts/dev-build.sh
+
 # Binaries
 *.exe
 *.exe~

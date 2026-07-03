@@ -8,17 +8,27 @@ import (
 	"fmt"
 	"log"
 	"os"
+
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 func main() {
 	configPath := flag.String("config", "", "path to config file (default: ~/.fleetman/config.yaml)")
-	server := flag.String("server", "", "server URL (overrides config)")
+	server := flag.String("server", "", "server host, e.g. fleetman.example.com (overrides config)")
+	insecure := flag.Bool("insecure", false, "use plaintext http/ws instead of https/wss (overrides config)")
 	masterKey := flag.String("master-key", "", "master API key (overrides config)")
+	repo := flag.String("repo", "", "GitHub \"owner/repo\" for install-script URLs (overrides config, default: "+defaultRepo+")")
 	flag.Parse()
+
+	if *repo == "" {
+		*repo = os.Getenv("FLEETMAN_REPO")
+	}
 
 	flags := LoginFlags{
 		Server:    *server,
+		Insecure:  *insecure,
 		MasterKey: *masterKey,
+		Repo:      *repo,
 	}
 
 	path, err := resolveConfigPath(*configPath)
@@ -53,8 +63,10 @@ Usage:
 
 Global flags:
   --config <path>      Config file path (default: ~/.fleetman/config.yaml)
-  --server <url>       Server URL (overrides config, skips prompt)
+  --server <host>      Server host, e.g. fleetman.example.com (overrides config, skips prompt)
+  --insecure            Use plaintext http/ws instead of https/wss (overrides config)
   --master-key <key>   Master API key (overrides config, skips prompt)
+  --repo <owner/repo>  GitHub repo for install-script URLs (default: `+defaultRepo+`)
 
 Commands:
   login     Save server URL and master key to config
@@ -66,8 +78,10 @@ Commands:
 // cmdMain is the main TUI entry point, reached when the binary is run with no args.
 // Config is already validated before this is called.
 func cmdMain(cfg *Config) {
-	// Placeholder — main TUI goes here.
-	fmt.Printf("Connected to %s\n", cfg.Server)
+	p := tea.NewProgram(newMainModel(cfg), tea.WithAltScreen())
+	if _, err := p.Run(); err != nil {
+		log.Fatalf("FATAL: tui error: %v", err)
+	}
 }
 
 // cmdLogin saves credentials, using the TUI form when running interactively.
@@ -79,10 +93,16 @@ func cmdLogin(path string, flags LoginFlags) {
 
 	// Merge flags onto existing config so the TUI/prompts show current values.
 	if flags.Server != "" {
-		existing.Server = flags.Server
+		existing.setServer(flags.Server)
+	}
+	if flags.Insecure {
+		existing.Insecure = true
 	}
 	if flags.MasterKey != "" {
 		existing.MasterKey = flags.MasterKey
+	}
+	if flags.Repo != "" {
+		existing.Repo = flags.Repo
 	}
 
 	var cfg Config
@@ -120,7 +140,9 @@ func cmdLogout(path string) {
 func requireConfig(path string, flags LoginFlags) *Config {
 	// Both flags supplied — skip file entirely.
 	if flags.Server != "" && flags.MasterKey != "" {
-		return &Config{Server: flags.Server, MasterKey: flags.MasterKey}
+		cfg := &Config{MasterKey: flags.MasterKey, Repo: flags.Repo, Insecure: flags.Insecure}
+		cfg.setServer(flags.Server)
+		return cfg
 	}
 
 	cfg, err := LoadConfig(path)
@@ -130,10 +152,16 @@ func requireConfig(path string, flags LoginFlags) *Config {
 
 	if cfg.IsComplete() {
 		if flags.Server != "" {
-			cfg.Server = flags.Server
+			cfg.setServer(flags.Server)
+		}
+		if flags.Insecure {
+			cfg.Insecure = true
 		}
 		if flags.MasterKey != "" {
 			cfg.MasterKey = flags.MasterKey
+		}
+		if flags.Repo != "" {
+			cfg.Repo = flags.Repo
 		}
 		return cfg
 	}

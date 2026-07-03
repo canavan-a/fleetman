@@ -239,6 +239,8 @@ func (a *Agent) handleCommand(cmd *wire.Command) {
 
 // normalizeServerURL ensures the server address has a ws:// or wss:// scheme.
 // Accepts: "host:port", "http://host:port", "https://host:port", "ws://...", "wss://...".
+// A bare host (no scheme) defaults to secure (wss://) — pass an explicit
+// ws:// or http:// prefix to opt into a plaintext connection.
 func normalizeServerURL(addr string) string {
 	switch {
 	case strings.HasPrefix(addr, "ws://") || strings.HasPrefix(addr, "wss://"):
@@ -248,6 +250,6 @@ func normalizeServerURL(addr string) string {
 	case strings.HasPrefix(addr, "http://"):
 		return "ws://" + strings.TrimRight(addr[len("http://"):], "/")
 	default:
-		return "ws://" + strings.TrimRight(addr, "/")
+		return "wss://" + strings.TrimRight(addr, "/")
 	}
 }

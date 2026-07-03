@@ -14,24 +14,24 @@ import (
 var (
 	styleBox = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("62")).
+			BorderForeground(accentColor).
 			Padding(1, 3).
 			Width(52)
 
 	styleTitle = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color("62")).
+			Foreground(accentColor).
 			MarginBottom(1)
 
 	styleLabel = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("245"))
+			Foreground(mutedColor)
 
 	styleError = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("196")).
+			Foreground(errorColor).
 			MarginTop(1)
 
 	styleHint = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("240")).
+			Foreground(hintColor).
 			MarginTop(1)
 )
 
@@ -46,15 +46,17 @@ const (
 type loginModel struct {
 	inputs    [fieldCount]textinput.Model
 	focused   int
+	insecure  bool // ctrl+t toggles; true = plaintext http/ws instead of https/wss
 	err       string
 	done      bool
 	cancelled bool
+	prefill   Config // carries fields not edited in this form (e.g. Repo)
 	result    Config // populated on success
 }
 
 func newLoginModel(prefill Config) loginModel {
 	server := textinput.New()
-	server.Placeholder = "http://localhost:8080"
+	server.Placeholder = "fleetman.example.com"
 	server.CharLimit = 256
 	server.Width = 44
 	server.SetValue(prefill.Server)
@@ -68,8 +70,10 @@ func newLoginModel(prefill Config) loginModel {
 	key.SetValue(prefill.MasterKey)
 
 	m := loginModel{
-		inputs:  [fieldCount]textinput.Model{server, key},
-		focused: fieldServer,
+		inputs:   [fieldCount]textinput.Model{server, key},
+		focused:  fieldServer,
+		insecure: prefill.Insecure,
+		prefill:  prefill,
 	}
 	m.inputs[fieldServer].Focus()
 	return m
@@ -87,6 +91,10 @@ func (m loginModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cancelled = true
 			m.done = true
 			return m, tea.Quit
+
+		case tea.KeyCtrlT:
+			m.insecure = !m.insecure
+			return m, nil
 
 		case tea.KeyTab, tea.KeyShiftTab:
 			m.err = ""
@@ -125,11 +133,11 @@ func (m loginModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m loginModel) submit() (tea.Model, tea.Cmd) {
-	server := strings.TrimRight(strings.TrimSpace(m.inputs[fieldServer].Value()), "/")
+	rawServer := strings.TrimSpace(m.inputs[fieldServer].Value())
 	key := strings.TrimSpace(m.inputs[fieldKey].Value())
 
-	if server == "" {
-		m.err = "Server URL is required"
+	if rawServer == "" {
+		m.err = "Server is required"
 		m.focused = fieldServer
 		m.inputs[fieldServer].Focus()
 		m.inputs[fieldKey].Blur()
@@ -140,7 +148,16 @@ func (m loginModel) submit() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	m.result = Config{Server: server, MasterKey: key}
+	// A typed scheme (http://, ws://, ...) is an explicit insecure opt-in
+	// on top of the ctrl+t toggle.
+	host, insecureFromScheme := normalizeServer(rawServer)
+
+	m.result = Config{
+		Server:    host,
+		Insecure:  m.insecure || insecureFromScheme,
+		MasterKey: key,
+		Repo:      m.prefill.Repo,
+	}
 	m.done = true
 	return m, tea.Quit
 }
@@ -151,7 +168,7 @@ func (m loginModel) View() string {
 	b.WriteString(styleTitle.Render("Fleet Master — Login"))
 	b.WriteString("\n")
 
-	b.WriteString(styleLabel.Render("Server URL"))
+	b.WriteString(styleLabel.Render("Server (host, e.g. fleetman.example.com)"))
 	b.WriteString("\n")
 	b.WriteString(m.inputs[fieldServer].View())
 	b.WriteString("\n\n")
@@ -159,6 +176,13 @@ func (m loginModel) View() string {
 	b.WriteString(styleLabel.Render("Master API Key"))
 	b.WriteString("\n")
 	b.WriteString(m.inputs[fieldKey].View())
+	b.WriteString("\n\n")
+
+	if m.insecure {
+		b.WriteString(errStyle.Render("[x] insecure — plaintext http/ws"))
+	} else {
+		b.WriteString(suggestStyle.Render("[ ] secure — https/wss (ctrl+t to toggle)"))
+	}
 
 	if m.err != "" {
 		b.WriteString(styleError.Render("✗ " + m.err))

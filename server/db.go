@@ -18,7 +18,11 @@ type DB struct {
 
 // OpenDB opens (or creates) the SQLite database at path and runs migrations.
 func OpenDB(path string) (*DB, error) {
-	dsn := fmt.Sprintf("%s?_journal_mode=WAL&_busy_timeout=5000&_foreign_keys=ON", path)
+	// modernc.org/sqlite only recognizes _pragma=<name>(<value>) for PRAGMA
+	// settings — the mattn/go-sqlite3-style _journal_mode/_busy_timeout/
+	// _foreign_keys params are silently ignored by this driver, which had
+	// left foreign key enforcement (and WAL/busy_timeout) off entirely.
+	dsn := fmt.Sprintf("%s?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)", path)
 	conn, err := sqlx.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open db: %w", err)
