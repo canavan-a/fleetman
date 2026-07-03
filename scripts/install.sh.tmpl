@@ -119,10 +119,13 @@ if [ "$UNATTENDED" -eq 1 ]; then
   [ -n "$TOKEN" ]     || { echo "ERROR: --token required in unattended mode"; exit 1; }
   [ -n "$DEVICE_ID" ] || { echo "ERROR: --device-id required in unattended mode"; exit 1; }
 else
-  printf "Server address [%s]: " "${SERVER}" ;  read v < /dev/tty; SERVER="${v:-$SERVER}"
-  printf "Device ID [%s]: " "${DEVICE_ID}" ;    read v < /dev/tty; DEVICE_ID="${v:-$DEVICE_ID}"
-  printf "Token: " ;                            read v < /dev/tty; TOKEN="${v:-$TOKEN}"
-  printf "Role label [%s]: " "${ROLE}" ;        read v < /dev/tty; ROLE="${v:-$ROLE}"
+  # Only prompt for fields not already supplied via flag/env — e.g. the
+  # master CLI always passes --server/--token/--device-id, so none of
+  # those ever prompt; only a genuinely missing --role would.
+  [ -n "$SERVER" ]    || { printf "Server address: "; read v < /dev/tty; SERVER="$v"; }
+  [ -n "$DEVICE_ID" ] || { printf "Device ID: ";       read v < /dev/tty; DEVICE_ID="$v"; }
+  [ -n "$TOKEN" ]     || { printf "Token: ";           read v < /dev/tty; TOKEN="$v"; }
+  [ -n "$ROLE" ]      || { printf "Role label (optional): "; read v < /dev/tty; ROLE="$v"; }
   [ -n "$SERVER" ] && [ -n "$TOKEN" ] && [ -n "$DEVICE_ID" ] || {
     echo "ERROR: server, token, and device-id are required"; exit 1;
   }

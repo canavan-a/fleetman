@@ -6,6 +6,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/canavan-a/fleetman/internal/api"
 )
@@ -54,14 +55,15 @@ type provisionModel struct {
 
 func newProvisionModel(client *api.Client, repo, host string, insecure bool, tags []string) provisionModel {
 	name := textinput.New()
-	name.Placeholder = "e.g. web1 (optional, defaults to the device id)"
+	name.Placeholder = "e.g. web1"
 	name.Width = 40
 	name.CharLimit = 64
 	name.Focus()
 
+	// Rendered by hand via renderTagsLine (for ghost-text autocomplete and
+	// per-tag coloring), so no Placeholder/Width needed here — only used
+	// for keystroke handling and value storage.
 	tagsInput := textinput.New()
-	tagsInput.Placeholder = "prod, edge"
-	tagsInput.Width = 40
 	tagsInput.CharLimit = 128
 
 	return provisionModel{
@@ -86,12 +88,24 @@ func (m provisionModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.cancelled = true
 				m.done = true
 				return m, nil
-			case tea.KeyTab, tea.KeyShiftTab:
-				if msg.Type == tea.KeyTab {
-					m.focused = (m.focused + 1) % provFieldCount
-				} else {
-					m.focused = (m.focused - 1 + provFieldCount) % provFieldCount
+			case tea.KeyTab:
+				// On the tags field, Tab first accepts the ghost-text
+				// completion; only moves focus once there's nothing left
+				// to complete.
+				if m.focused == provFieldTags && m.acceptTagGhost() {
+					return m, nil
 				}
+				m.focused = (m.focused + 1) % provFieldCount
+				for i := range m.inputs {
+					if i == m.focused {
+						m.inputs[i].Focus()
+					} else {
+						m.inputs[i].Blur()
+					}
+				}
+				return m, textinput.Blink
+			case tea.KeyShiftTab:
+				m.focused = (m.focused - 1 + provFieldCount) % provFieldCount
 				for i := range m.inputs {
 					if i == m.focused {
 						m.inputs[i].Focus()
@@ -156,6 +170,92 @@ func (m provisionModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// splitTagToken splits a comma-separated tags value into the already-typed
+// tags before the last comma and the in-progress token being typed.
+func splitTagToken(value string) (completed []string, current string) {
+	i := strings.LastIndexByte(value, ',')
+	if i < 0 {
+		return nil, value
+	}
+	return parseTagList(value[:i]), value[i+1:]
+}
+
+// tagGhostSuffix returns the remainder of the first existing tag that
+// completes the in-progress token, e.g. typed "pro" against ["prod"]
+// returns "d". Empty if there's no match or the token is already complete.
+func (m *provisionModel) tagGhostSuffix() string {
+	_, current := splitTagToken(m.inputs[provFieldTags].Value())
+	trimmed := strings.TrimSpace(current)
+	if trimmed == "" {
+		return ""
+	}
+	low := strings.ToLower(trimmed)
+	for _, t := range m.tags {
+		if strings.HasPrefix(strings.ToLower(t), low) && len(t) > len(trimmed) {
+			return t[len(trimmed):]
+		}
+	}
+	return ""
+}
+
+// acceptTagGhost completes the in-progress token with the current ghost
+// suggestion (if any), keeping any already-completed tags before it.
+func (m *provisionModel) acceptTagGhost() bool {
+	ghost := m.tagGhostSuffix()
+	if ghost == "" {
+		return false
+	}
+	value := m.inputs[provFieldTags].Value()
+	m.inputs[provFieldTags].SetValue(value + ghost)
+	m.inputs[provFieldTags].CursorEnd()
+	return true
+}
+
+// tagExists reports whether name is (case-insensitively) an already-known tag.
+func (m *provisionModel) tagKnown(name string) bool {
+	low := strings.ToLower(strings.TrimSpace(name))
+	for _, t := range m.tags {
+		if strings.ToLower(t) == low {
+			return true
+		}
+	}
+	return false
+}
+
+// renderTagsLine draws the tags field by hand: completed tokens are colored
+// by whether they match an existing tag, the in-progress token is plain,
+// and any autocomplete match trails off as faint ghost text.
+func (m provisionModel) renderTagsLine() string {
+	value := m.inputs[provFieldTags].Value()
+	completed, current := splitTagToken(value)
+
+	var b strings.Builder
+	for i, tag := range completed {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		if m.tagKnown(tag) {
+			b.WriteString(okStyle.Render(tag))
+		} else {
+			b.WriteString(tag)
+		}
+	}
+	if len(completed) > 0 {
+		b.WriteString(", ")
+	}
+
+	b.WriteString(current)
+	if m.focused == provFieldTags {
+		b.WriteString(suggestStyle.Render(m.tagGhostSuffix()))
+		b.WriteString(rowCursorStyle.Render(" "))
+	}
+	if value == "" {
+		b.WriteString(dimStyle.Render("prod, edge"))
+	}
+
+	return b.String()
+}
+
 func parseTagList(s string) []string {
 	var out []string
 	for _, part := range strings.Split(s, ",") {
@@ -175,10 +275,10 @@ func (m provisionModel) mint() tea.Cmd {
 	}
 }
 
-// installCmd builds the single-line install command for this device, used
-// both by the clipboard copy and (if ever needed) direct display.
-func (m provisionModel) installCmd() string {
-	installURL := "https://github.com/" + m.repo + "/releases/latest/download/agent-install.sh"
+// installArgs returns the pieces installCmd is built from, so both the
+// single-line and multi-line renderings stay in sync.
+func (m provisionModel) installArgs() (installURL string, flags []string) {
+	installURL = "https://github.com/" + m.repo + "/releases/latest/download/agent-install.sh"
 	// The agent's install script defaults a bare host to a secure (wss://)
 	// connection — only prepend ws:// when this master was explicitly set
 	// up as insecure, so we don't silently downgrade otherwise.
@@ -186,12 +286,42 @@ func (m provisionModel) installCmd() string {
 	if m.insecure {
 		serverFlag = "ws://" + m.host
 	}
-	cmd := fmt.Sprintf("curl -fsSL %s | sudo sh -s -- --server %s --token %s --device-id %s",
-		installURL, serverFlag, m.resultToken, m.resultDevice)
-	if m.resultName != "" {
-		cmd += " --role " + m.resultName
+	flags = []string{
+		"--server " + serverFlag,
+		"--token " + m.resultToken,
+		"--device-id " + m.resultDevice,
 	}
-	return cmd
+	if m.resultName != "" {
+		flags = append(flags, "--role "+m.resultName)
+	}
+	return installURL, flags
+}
+
+// installCmd builds the single-line install command, used for the
+// clipboard copy — one unbroken line is the safest thing to paste at a
+// shell prompt.
+func (m provisionModel) installCmd() string {
+	installURL, flags := m.installArgs()
+	return fmt.Sprintf("curl -fsSL %s | sudo sh -s -- %s", installURL, strings.Join(flags, " "))
+}
+
+// installCmdMultiline formats the same command with a shell line
+// continuation (`\` + newline) after each flag, for on-screen readability.
+// These are real shell line-continuations, not a terminal-wrap artifact —
+// safe to copy-paste as multiple lines, unlike letting lipgloss wrap a
+// single long line inside a bordered box.
+func (m provisionModel) installCmdMultiline() string {
+	installURL, flags := m.installArgs()
+	var b strings.Builder
+	fmt.Fprintf(&b, "curl -fsSL %s | sudo sh -s -- \\\n", installURL)
+	for i, f := range flags {
+		b.WriteString("  " + f)
+		if i < len(flags)-1 {
+			b.WriteString(" \\")
+		}
+		b.WriteString("\n")
+	}
+	return strings.TrimRight(b.String(), "\n")
 }
 
 func (m provisionModel) tagNewDevice(tags []string) tea.Cmd {
@@ -214,13 +344,13 @@ func (m provisionModel) View() string {
 	if m.stage != provisionResult {
 		b.WriteString(paneTitleStyle.Render("Register new device"))
 		b.WriteString("\n\n")
-		b.WriteString(dimStyle.Render("Name (optional — sets the install script's --role label)"))
+		b.WriteString(dimStyle.Render("Name (optional)"))
 		b.WriteString("\n")
 		b.WriteString(m.inputs[provFieldName].View())
 		b.WriteString("\n\n")
 		b.WriteString(dimStyle.Render("Tags (optional, comma-separated)"))
 		b.WriteString("\n")
-		b.WriteString(m.inputs[provFieldTags].View())
+		b.WriteString(m.renderTagsLine())
 		b.WriteString("\n\n")
 		if m.err != "" {
 			b.WriteString(errStyle.Render("✗ " + m.err))
@@ -239,13 +369,15 @@ func (m provisionModel) View() string {
 		b.WriteString("\n\n")
 		b.WriteString(dimStyle.Render("Select and copy manually if the clipboard didn't work:"))
 		b.WriteString("\n\n")
-		b.WriteString(m.installCmd())
+		b.WriteString(m.installCmdMultiline())
 		b.WriteString("\n\n")
 		b.WriteString(hintBarStyle.Render("v / enter / esc · back"))
-		// No fixed Width here either, for the same copy-paste-safety reason
-		// as the command itself: a wrapped line inside a border mixes
-		// border characters into anything selected from the terminal.
-		return paneFocusedStyle.Render(b.String())
+		// Deliberately no border here: a bordered box puts a "│" on both
+		// sides of every line, and dragging a selection across multiple
+		// lines in a terminal captures those characters right along with
+		// the command text — exactly the copy-paste corruption we're
+		// trying to avoid, just via the border instead of text wrapping.
+		return lipgloss.NewStyle().Padding(1, 2).Render(b.String())
 	}
 
 	labelStyle := dimStyle.Width(11)

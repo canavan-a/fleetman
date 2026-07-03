@@ -187,6 +187,11 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.err = ""
 		m.tags = msg.tags
 		m.allDevices = msg.devices
+		// Clamp tagCursor in case a tag was deleted out from under it —
+		// valid range is 0=[all], 1=[no tag], 2..len(tags)+1=real tags.
+		if maxCursor := len(m.tags) + 1; m.tagCursor > maxCursor {
+			m.tagCursor = maxCursor
+		}
 		m.applyFilter()
 		if newTag || newDevice {
 			return m, m.startCascade()
@@ -578,7 +583,17 @@ func (m mainModel) View() string {
 	}
 
 	switch m.mode {
-	case modeTagPicker, modeTagNew, modeUntagConfirm, modeDeleteConfirm, modeDeleteTagConfirm, modeProvision:
+	case modeProvision:
+		if pm, ok := m.subModel.(provisionModel); ok && pm.showFull {
+			// Skip lipgloss.Place here: centering pads every shorter line
+			// with trailing spaces to make a uniform block, which would
+			// land right after this screen's "\" line continuations —
+			// fine for terminals that strip trailing whitespace on copy,
+			// but not guaranteed everywhere, so just left-align instead.
+			return pm.View()
+		}
+		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, m.subModel.View())
+	case modeTagPicker, modeTagNew, modeUntagConfirm, modeDeleteConfirm, modeDeleteTagConfirm:
 		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, m.subModel.View())
 	case modeCommand:
 		return m.subModel.View()
@@ -751,6 +766,9 @@ func (m mainModel) renderSidebar(w, h int) string {
 		b.WriteString(truncate(deviceName(m.selected[id]), w-2))
 		b.WriteString("\n")
 	}
+
+	b.WriteString("\n")
+	b.WriteString(dimStyle.Render("[A] select all"))
 
 	if len(m.selected) > 0 {
 		b.WriteString("\n")
