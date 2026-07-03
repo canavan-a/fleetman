@@ -1,7 +1,9 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"sort"
 	"strings"
 	"time"
@@ -40,6 +42,7 @@ func pollAfter() tea.Cmd {
 
 type cmdModeModel struct {
 	client *api.Client
+	repo   string // GitHub "owner/repo", for resolving :upgrade with no version
 
 	tag     string
 	devices []api.Device          // devices in current view
@@ -64,13 +67,14 @@ type cmdModeModel struct {
 	exitRequested bool
 }
 
-func newCmdModeModel(client *api.Client, tag string, devices []api.Device, target map[string]api.Device) cmdModeModel {
+func newCmdModeModel(client *api.Client, repo, tag string, devices []api.Device, target map[string]api.Device) cmdModeModel {
 	ti := textinput.New()
-	ti.Placeholder = "command  (or  :restart <service>)"
+	ti.Placeholder = "command  (or  :restart <service>, :upgrade [version])"
 	ti.Width = 60
 	ti.Focus()
 	return cmdModeModel{
 		client:  client,
+		repo:    repo,
 		tag:     tag,
 		devices: devices,
 		target:  target,
@@ -238,6 +242,31 @@ func (m cmdModeModel) fire(text string) (tea.Model, tea.Cmd) {
 		target.All = true
 	}
 
+	client := m.client
+
+	if text == ":upgrade" || strings.HasPrefix(text, ":upgrade ") {
+		version := strings.TrimSpace(strings.TrimPrefix(text, ":upgrade"))
+		repo := m.repo
+		return m, func() tea.Msg {
+			if version == "" {
+				v, err := fetchLatestGithubTag(repo)
+				if err != nil {
+					return cmdPostedMsg{err: fmt.Errorf("resolve latest version: %w", err)}
+				}
+				version = v
+			}
+			req := api.PostCommandRequest{
+				Action: wire.ActionUpgrade,
+				Target: target,
+				Payload: map[string]interface{}{
+					"version": version,
+				},
+			}
+			resp, err := client.PostCommand(req)
+			return cmdPostedMsg{resp: resp, err: err}
+		}
+	}
+
 	action := wire.ActionRunCommand
 	payload := map[string]interface{}{"argv": []string{"sh", "-c", text}}
 
@@ -246,12 +275,37 @@ func (m cmdModeModel) fire(text string) (tea.Model, tea.Cmd) {
 		payload = map[string]interface{}{"service": strings.TrimSpace(strings.TrimPrefix(text, ":restart "))}
 	}
 
-	client := m.client
 	req := api.PostCommandRequest{Action: action, Target: target, Payload: payload}
 	return m, func() tea.Msg {
 		resp, err := client.PostCommand(req)
 		return cmdPostedMsg{resp: resp, err: err}
 	}
+}
+
+// fetchLatestGithubTag resolves the latest release tag for repo ("owner/name")
+// via GitHub's public API, for ":upgrade" with no explicit version.
+func fetchLatestGithubTag(repo string) (string, error) {
+	httpClient := &http.Client{Timeout: 10 * time.Second}
+	resp, err := httpClient.Get("https://api.github.com/repos/" + repo + "/releases/latest")
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 300 {
+		return "", fmt.Errorf("github returned %s", resp.Status)
+	}
+
+	var payload struct {
+		TagName string `json:"tag_name"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return "", err
+	}
+	if payload.TagName == "" {
+		return "", fmt.Errorf("no releases found for %s", repo)
+	}
+	return payload.TagName, nil
 }
 
 func pollCommand(client *api.Client, id string) tea.Cmd {
@@ -291,12 +345,20 @@ func (m cmdModeModel) View() string {
 		statusCol := dimStyle.Render("—")
 		outCol := ""
 		if has {
-			switch res.Status {
-			case "ok":
+			switch {
+			case res.Status == "ok":
 				statusCol = okStyle.Render("✓ ok")
-			case "error":
+			case res.Status == "error":
 				statusCol = errStyle.Render(fmt.Sprintf("✗ err(%d)", res.Retcode))
-			case "timeout":
+			case res.Status == "timeout":
+				statusCol = dimStyle.Render("⏱ timeout")
+			case !m.dispatched:
+				// Still "pending" per the last poll, but we've stopped
+				// polling (client-side timeout hit) — the server will
+				// eventually flip this to "timeout" itself, we just won't
+				// hear about it since we're not asking anymore. Render it
+				// as such rather than leaving a misleading "… wait"
+				// forever implying it's still in flight.
 				statusCol = dimStyle.Render("⏱ timeout")
 			default:
 				statusCol = dimStyle.Render("… wait")

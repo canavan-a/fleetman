@@ -89,6 +89,15 @@ func (a *Agent) execUpgrade(cmd *wire.Command) {
 
 	log.Printf("upgrade: binary swapped, restarting")
 
+	// Report success before we exit/re-exec — the WS connection is still
+	// alive at this point, so this is our only chance to ack the command.
+	// Without this the server (and master TUI) never sees anything but
+	// "pending" for a successful upgrade, since the process that would
+	// normally reply never gets a chance to.
+	result.Stdout = "upgraded, restarting"
+	result.Retcode = 0
+	a.sendResult(result)
+
 	// 5. Restart based on init type.
 	// Systems with auto-restart (systemd, runit, s6) — just exit, the supervisor restarts us.
 	// Others — re-exec directly into the new binary.

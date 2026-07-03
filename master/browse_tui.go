@@ -362,7 +362,7 @@ func (m mainModel) handleBrowseKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.mode = modeCommand
-		m.subModel = newCmdModeModel(m.client, m.activeTag, m.devices, m.selected)
+		m.subModel = newCmdModeModel(m.client, m.repo, m.activeTag, m.devices, m.selected)
 		return m, m.subModel.Init()
 
 	case "b":
