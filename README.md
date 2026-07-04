@@ -4,10 +4,11 @@
 
 **Command a fleet of Linux devices from a single terminal.**
 
-One master controls many agents; everything flows through a central server — no SSH-ing into a thousand boxes to run one command.
+One master controls many agents. All traffic flows through a central server.
 
 [![Release](https://img.shields.io/github/v/release/canavan-a/fleetman?label=release&color=orange)](https://github.com/canavan-a/fleetman/releases/latest)
 [![Go Version](https://img.shields.io/github/go-mod/go-version/canavan-a/fleetman)](go.mod)
+[![Go Report Card](https://goreportcard.com/badge/github.com/canavan-a/fleetman)](https://goreportcard.com/report/github.com/canavan-a/fleetman)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 ![Fleetman TUI](assets/tui-screenshot.png)
@@ -17,8 +18,8 @@ One master controls many agents; everything flows through a central server — n
 ## Why Fleetman
 
 - **One command, thousands of devices.** Target by ID, tag, label, or `{"all": true}`.
-- **Agents dial out.** No inbound ports on your fleet — every agent connects out to the server over WebSocket, so it works behind NAT/firewalls with zero config.
-- **Tiny footprint.** A single static Go binary per component; the agent is built to run happily on a Raspberry Pi.
+- **Agents dial out.** No inbound ports on your fleet. Every agent connects out to the server over WebSocket, so it works behind NAT and firewalls with zero config.
+- **Tiny footprint.** A single static Go binary per component. The agent runs happily on a Raspberry Pi.
 - **Built-in OTA updates.** Ship new agent binaries to the whole fleet through the same command channel.
 - **Real TUI, not just a CLI.** Browse devices, tag them, select a subset, and fire off commands interactively.
 
@@ -28,9 +29,9 @@ Master (CLI/TUI) ──HTTP──> Server <──WebSocket── Agent
                                    <──WebSocket── Agent (...thousands)
 ```
 
-- **Server (hub)** — HTTP control plane + WebSocket data plane. Holds the device registry, routes commands, correlates results. SQLite for persistence.
-- **Agent** — small daemon on each device. Dials out to the server over WebSocket. Executes commands, reports back.
-- **Master** — CLI/TUI. Talks to the server's HTTP API to provision devices, send commands, and view results.
+- **Server (hub)**: HTTP control plane + WebSocket data plane. Holds the device registry, routes commands, correlates results. SQLite for persistence.
+- **Agent**: small daemon on each device. Dials out to the server over WebSocket. Executes commands, reports back.
+- **Master**: CLI/TUI. Talks to the server's HTTP API to provision devices, send commands, and view results.
 
 ## Quickstart
 
@@ -44,12 +45,9 @@ curl -s -X POST localhost:3333/admin/master-keys -d '{"name": "my-laptop"}'
 # 3. Install the master CLI/TUI on your machine and log in
 curl -fsSL https://github.com/canavan-a/fleetman/releases/latest/download/install-master.sh | sh
 fleetman login   # paste your server URL + master key
-
-# 4. Install the agent on each device you want to manage
-curl -fsSL https://github.com/canavan-a/fleetman/releases/latest/download/agent-install.sh | sudo sh
 ```
 
-Run `fleetman` and your devices show up in the TUI as soon as their agents connect.
+Run `fleetman`, press `[p]` to provision a device, and it will generate the exact agent install command for you to run on that device. No need to install the agent manually.
 
 ---
 
@@ -123,16 +121,14 @@ On first run, `fleetman` prompts for your server URL and master API key and save
 
 ### Install
 
-```sh
-curl -fsSL https://github.com/canavan-a/fleetman/releases/latest/download/agent-install.sh | sudo sh
-```
-
-Or unattended (for automation / image-baking):
+You don't normally need to run this by hand. In the master TUI, press `[p]` to provision a device and it prints the exact install command, already filled in with a token and device ID:
 
 ```sh
 curl -fsSL https://github.com/canavan-a/fleetman/releases/latest/download/agent-install.sh | \
   sudo sh -s -- --unattended --server wss://your-server:8080 --token <token> --device-id <dev-id>
 ```
+
+Run that on the device. Useful for automation and image-baking too, since it's a single non-interactive command.
 
 To uninstall:
 
@@ -196,7 +192,7 @@ curl -s -X POST localhost:3333/admin/master-keys -d '{"name": "my-laptop"}'
 # → {"id": "...", "name": "my-laptop", "key": "abc123...", "created_at": "..."}
 ```
 
-Save the returned key — it is shown only once. Use it as your master API key in `fleetman`.
+Save the returned key. It is shown only once. Use it as your master API key in `fleetman`.
 
 ### Managing master keys
 
