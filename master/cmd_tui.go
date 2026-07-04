@@ -18,6 +18,7 @@ import (
 const (
 	pollInterval = 1 * time.Second
 	pollTimeout  = 30 * time.Second
+	peekStep     = 3 // lines added/removed per peek keypress on the device list
 )
 
 // --- messages ---
@@ -62,6 +63,7 @@ type cmdModeModel struct {
 	rowsFocused bool // Tab toggles focus between the launcher and the result rows
 	rowCursor   int
 	detailOpen  bool // full stdout/stderr overlay for the row under rowCursor
+	peekLines   int  // extra output lines shown inline for the row under rowCursor
 
 	err           string
 	exitRequested bool
@@ -89,9 +91,18 @@ func (m cmdModeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		if m.detailOpen {
+			rows := m.rowsToShow()
 			switch msg.String() {
 			case "esc", "enter", "q":
 				m.detailOpen = false
+			case "left", "h", "p":
+				if m.rowCursor > 0 {
+					m.rowCursor--
+				}
+			case "right", "l", "n":
+				if m.rowCursor < len(rows)-1 {
+					m.rowCursor++
+				}
 			}
 			return m, nil
 		}
@@ -124,10 +135,21 @@ func (m cmdModeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "j", "down":
 				if m.rowCursor < len(rows)-1 {
 					m.rowCursor++
+					m.peekLines = 0
 				}
 			case "k", "up":
 				if m.rowCursor > 0 {
 					m.rowCursor--
+					m.peekLines = 0
+				}
+			case "l", "right", "+":
+				m.peekLines += peekStep
+			case "h", "left", "-":
+				if m.peekLines > 0 {
+					m.peekLines -= peekStep
+					if m.peekLines < 0 {
+						m.peekLines = 0
+					}
 				}
 			case "enter":
 				if m.rowCursor < len(rows) {
@@ -217,6 +239,7 @@ func (m cmdModeModel) fire(text string) (tea.Model, tea.Cmd) {
 	m.summary = nil
 	m.rowCursor = 0
 	m.detailOpen = false
+	m.peekLines = 0
 	m.input.SetValue("")
 
 	target := api.Target{}
@@ -380,6 +403,22 @@ func (m cmdModeModel) View() string {
 		}
 		b.WriteString(line)
 		b.WriteString("\n")
+
+		if m.rowsFocused && i == m.rowCursor && m.peekLines > 0 && has {
+			src := res.Stdout
+			if res.Status == "error" && strings.TrimSpace(res.Stderr) != "" {
+				src = res.Stderr
+			}
+			peek, more := previewLines(src, m.peekLines)
+			for _, l := range peek {
+				b.WriteString(dimStyle.Render("      " + truncate(l, 76)))
+				b.WriteString("\n")
+			}
+			if more > 0 {
+				b.WriteString(dimStyle.Render(fmt.Sprintf("      … %d more line(s), 'l' to expand", more)))
+				b.WriteString("\n")
+			}
+		}
 	}
 
 	b.WriteString("\n")
@@ -396,7 +435,7 @@ func (m cmdModeModel) View() string {
 		b.WriteString("\n")
 	}
 	if m.rowsFocused {
-		b.WriteString(hintBarStyle.Render("↑↓ move   enter · view full output   tab · back to launcher   esc · back to browse"))
+		b.WriteString(hintBarStyle.Render("↑↓ move   ←→ peek more/less output   enter · view full output   tab · back to launcher   esc · back to browse"))
 	} else {
 		b.WriteString(hintBarStyle.Render("↑↓ history   enter · fire   tab · browse results   esc · back to browse"))
 	}
@@ -448,7 +487,7 @@ func (m cmdModeModel) renderDetail() string {
 	}
 
 	b.WriteString("\n")
-	b.WriteString(hintBarStyle.Render("esc / enter · close"))
+	b.WriteString(hintBarStyle.Render("←/→ · prev/next device   esc / enter · close"))
 
 	return paneFocusedStyle.Render(b.String())
 }
@@ -467,6 +506,21 @@ func (m cmdModeModel) rowsToShow() []api.Device {
 		return out
 	}
 	return m.devices
+}
+
+// previewLines returns up to n non-empty leading lines of s (trimmed of
+// trailing whitespace/newline), plus a count of how many lines remain beyond
+// that for a "N more lines" hint.
+func previewLines(s string, n int) (lines []string, more int) {
+	s = strings.TrimRight(s, "\n")
+	if s == "" {
+		return nil, 0
+	}
+	all := strings.Split(s, "\n")
+	if len(all) <= n {
+		return all, 0
+	}
+	return all[:n], len(all) - n
 }
 
 func firstLine(s string) string {

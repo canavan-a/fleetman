@@ -58,6 +58,8 @@ func main() {
 		w.Write([]byte("ok\n"))
 	})
 
+	mux.HandleFunc("GET /{$}", HandleHome())
+
 	mux.HandleFunc("GET /ws", hub.HandleWebSocket)
 
 	mux.Handle("POST /tokens",                    auth(http.HandlerFunc(hub.HandleMintToken)))

@@ -142,6 +142,7 @@ type mainModel struct {
 	mode             mode
 	subModel         tea.Model
 	pendingTagDelete string
+	lastCmd          *cmdModeModel // last command-mode session, restored on re-entry with the same tag/target
 
 	quitting bool
 }
@@ -362,7 +363,15 @@ func (m mainModel) handleBrowseKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.mode = modeCommand
-		m.subModel = newCmdModeModel(m.client, m.repo, m.activeTag, m.devices, m.selected)
+		if m.lastCmd != nil && sameCmdSettings(*m.lastCmd, m.activeTag, m.selected) {
+			restored := *m.lastCmd
+			restored.devices = m.devices
+			restored.client = m.client
+			restored.exitRequested = false
+			m.subModel = restored
+		} else {
+			m.subModel = newCmdModeModel(m.client, m.repo, m.activeTag, m.devices, m.selected)
+		}
 		return m, m.subModel.Init()
 
 	case "b":
@@ -485,6 +494,8 @@ func (m mainModel) updateSubMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case cmdModeModel:
 		if sm.exitRequested {
+			saved := sm
+			m.lastCmd = &saved
 			m.mode = modeBrowse
 			m.subModel = nil
 			return m, fetchData(m.client)
@@ -492,6 +503,24 @@ func (m mainModel) updateSubMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	return m, cmd
+}
+
+// sameCmdSettings reports whether a cached command-mode session was run
+// against the same tag filter and the same set of explicitly selected
+// devices, so its results are still meaningful to show again.
+func sameCmdSettings(cached cmdModeModel, tag string, target map[string]api.Device) bool {
+	if cached.tag != tag {
+		return false
+	}
+	if len(cached.target) != len(target) {
+		return false
+	}
+	for id := range target {
+		if _, ok := cached.target[id]; !ok {
+			return false
+		}
+	}
+	return true
 }
 
 func (m mainModel) selectedIDs() []string {

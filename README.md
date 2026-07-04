@@ -1,6 +1,26 @@
+<div align="center">
+
 # Fleetman
 
-A control system for sending commands to a fleet of Linux devices. One master controls many agents; all traffic flows through a central server.
+**Command a fleet of Linux devices from a single terminal.**
+
+One master controls many agents; everything flows through a central server — no SSH-ing into a thousand boxes to run one command.
+
+[![Release](https://img.shields.io/github/v/release/canavan-a/fleetman?label=release&color=orange)](https://github.com/canavan-a/fleetman/releases/latest)
+[![Go Version](https://img.shields.io/github/go-mod/go-version/canavan-a/fleetman)](go.mod)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
+![Fleetman TUI](assets/tui-screenshot.png)
+
+</div>
+
+## Why Fleetman
+
+- **One command, thousands of devices.** Target by ID, tag, label, or `{"all": true}`.
+- **Agents dial out.** No inbound ports on your fleet — every agent connects out to the server over WebSocket, so it works behind NAT/firewalls with zero config.
+- **Tiny footprint.** A single static Go binary per component; the agent is built to run happily on a Raspberry Pi.
+- **Built-in OTA updates.** Ship new agent binaries to the whole fleet through the same command channel.
+- **Real TUI, not just a CLI.** Browse devices, tag them, select a subset, and fire off commands interactively.
 
 ```
 Master (CLI/TUI) ──HTTP──> Server <──WebSocket── Agent
@@ -8,11 +28,37 @@ Master (CLI/TUI) ──HTTP──> Server <──WebSocket── Agent
                                    <──WebSocket── Agent (...thousands)
 ```
 
-## Components
-
 - **Server (hub)** — HTTP control plane + WebSocket data plane. Holds the device registry, routes commands, correlates results. SQLite for persistence.
 - **Agent** — small daemon on each device. Dials out to the server over WebSocket. Executes commands, reports back.
 - **Master** — CLI/TUI. Talks to the server's HTTP API to provision devices, send commands, and view results.
+
+## Quickstart
+
+```sh
+# 1. Install and start the server (as root)
+curl -fsSL https://github.com/canavan-a/fleetman/releases/latest/download/install-server.sh | sudo sh
+
+# 2. Mint a master key on the server
+curl -s -X POST localhost:3333/admin/master-keys -d '{"name": "my-laptop"}'
+
+# 3. Install the master CLI/TUI on your machine and log in
+curl -fsSL https://github.com/canavan-a/fleetman/releases/latest/download/install-master.sh | sh
+fleetman login   # paste your server URL + master key
+
+# 4. Install the agent on each device you want to manage
+curl -fsSL https://github.com/canavan-a/fleetman/releases/latest/download/agent-install.sh | sudo sh
+```
+
+Run `fleetman` and your devices show up in the TUI as soon as their agents connect.
+
+---
+
+## Table of Contents
+
+- [Master](#master)
+- [Agent](#agent)
+- [Server](#server)
+- [License](#license)
 
 ---
 
