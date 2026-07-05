@@ -131,6 +131,11 @@ type mainModel struct {
 
 	selected map[string]api.Device
 
+	// pendingSelectedIDs holds device IDs restored from disk that haven't
+	// been reconciled against a live device list yet. Cleared after the
+	// first dataMsg is processed.
+	pendingSelectedIDs []string
+
 	width, height int
 	err           string
 	status        string
@@ -147,13 +152,19 @@ type mainModel struct {
 	quitting bool
 }
 
-func newMainModel(cfg *Config) mainModel {
+func newMainModel(cfg *Config, state *TUIState) mainModel {
+	if state == nil {
+		state = &TUIState{}
+	}
 	return mainModel{
-		client:   api.New(cfg.BaseURL(), cfg.MasterKey),
-		repo:     cfg.EffectiveRepo(),
-		host:     cfg.Server,
-		insecure: cfg.Insecure,
-		selected: make(map[string]api.Device),
+		client:             api.New(cfg.BaseURL(), cfg.MasterKey),
+		repo:               cfg.EffectiveRepo(),
+		host:               cfg.Server,
+		insecure:           cfg.Insecure,
+		selected:           make(map[string]api.Device),
+		activeTag:          state.ActiveTag,
+		compact:            state.Compact,
+		pendingSelectedIDs: state.SelectedDeviceIDs,
 	}
 }
 
@@ -194,6 +205,17 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.tagCursor = maxCursor
 		}
 		m.applyFilter()
+		if m.pendingSelectedIDs != nil {
+			for _, dev := range m.allDevices {
+				for _, id := range m.pendingSelectedIDs {
+					if dev.DeviceID == id {
+						m.selected[dev.DeviceID] = dev
+						break
+					}
+				}
+			}
+			m.pendingSelectedIDs = nil
+		}
 		if newTag || newDevice {
 			return m, m.startCascade()
 		}

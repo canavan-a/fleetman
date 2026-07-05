@@ -9,9 +9,22 @@ permissions:
   contents: write
 
 jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Test
+        run: go test ./...
+
   build:
     name: Build master (${{ matrix.suffix }})
     runs-on: ubuntu-latest
+    needs: test
     strategy:
       matrix:
         include:

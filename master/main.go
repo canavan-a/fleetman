@@ -39,7 +39,7 @@ func main() {
 	// No subcommand — check auth and launch the main TUI.
 	if flag.NArg() == 0 {
 		cfg := requireConfig(path, flags)
-		cmdMain(cfg)
+		cmdMain(cfg, path)
 		return
 	}
 
@@ -77,10 +77,24 @@ Commands:
 
 // cmdMain is the main TUI entry point, reached when the binary is run with no args.
 // Config is already validated before this is called.
-func cmdMain(cfg *Config) {
-	p := tea.NewProgram(newMainModel(cfg), tea.WithAltScreen())
-	if _, err := p.Run(); err != nil {
+func cmdMain(cfg *Config, configPath string) {
+	statePath := defaultStatePath(configPath)
+	state, err := LoadTUIState(statePath)
+	if err != nil {
+		state = &TUIState{}
+	}
+
+	p := tea.NewProgram(newMainModel(cfg, state), tea.WithAltScreen())
+	finalModel, err := p.Run()
+	if err != nil {
 		log.Fatalf("FATAL: tui error: %v", err)
+	}
+	if m, ok := finalModel.(mainModel); ok {
+		_ = SaveTUIState(statePath, &TUIState{
+			SelectedDeviceIDs: m.selectedIDs(),
+			ActiveTag:         m.activeTag,
+			Compact:           m.compact,
+		})
 	}
 }
 

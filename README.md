@@ -7,8 +7,8 @@
 One master controls many agents. All traffic flows through a central server.
 
 [![Release](https://img.shields.io/github/v/release/canavan-a/fleetman?label=release&color=orange)](https://github.com/canavan-a/fleetman/releases/latest)
+[![CI](https://github.com/canavan-a/fleetman/actions/workflows/ci.yml/badge.svg)](https://github.com/canavan-a/fleetman/actions/workflows/ci.yml)
 [![Go Version](https://img.shields.io/github/go-mod/go-version/canavan-a/fleetman)](go.mod)
-[![Go Report Card](https://goreportcard.com/badge/github.com/canavan-a/fleetman)](https://goreportcard.com/report/github.com/canavan-a/fleetman)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 ![Fleetman TUI](assets/tui-screenshot.png)
