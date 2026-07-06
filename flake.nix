@@ -19,7 +19,7 @@
             inherit pname version;
             src = ./.;
             subPackages = [ subPackage ];
-            vendorHash = null;
+            vendorHash = "sha256-o5vS+YvqFwOzoRZN5UkMDIyr/cMEPj/Hw1jWtB5o3hw=";
             env.CGO_ENABLED = "0";
             ldflags = [ "-X main.Version=${version}" ];
           };
