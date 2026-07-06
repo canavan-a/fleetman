@@ -20,7 +20,7 @@
             src = ./.;
             subPackages = [ subPackage ];
             vendorHash = null;
-            CGO_ENABLED = "0";
+            env.CGO_ENABLED = "0";
             ldflags = [ "-X main.Version=${version}" ];
           };
         in
