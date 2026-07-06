@@ -15,20 +15,23 @@
         let
           pkgs = nixpkgs.legacyPackages.${system};
 
-          mkFleetPkg = { pname, subPackage }: pkgs.buildGoModule {
+          mkFleetPkg = { pname, subPackage, binName }: pkgs.buildGoModule {
             inherit pname version;
             src = ./.;
             subPackages = [ subPackage ];
             vendorHash = "sha256-o5vS+YvqFwOzoRZN5UkMDIyr/cMEPj/Hw1jWtB5o3hw=";
             env.CGO_ENABLED = "0";
             ldflags = [ "-X main.Version=${version}" ];
+            postInstall = ''
+              mv $out/bin/${subPackage} $out/bin/${binName}
+            '';
           };
         in
         {
           packages = {
             default         = self.packages.${system}.fleetman;
-            fleetman        = mkFleetPkg { pname = "fleetman";        subPackage = "master"; };
-            fleetman-server = mkFleetPkg { pname = "fleetman-server"; subPackage = "server"; };
+            fleetman        = mkFleetPkg { pname = "fleetman";        subPackage = "master"; binName = "fleetman"; };
+            fleetman-server = mkFleetPkg { pname = "fleetman-server"; subPackage = "server"; binName = "fleetman-server"; };
           };
 
           devShells.default = pkgs.mkShell {
