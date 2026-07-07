@@ -26,6 +26,8 @@ func main() {
 		cmdConfigure(os.Args[2:])
 	case "show-config":
 		cmdShowConfig(os.Args[2:])
+	case "header":
+		cmdHeader(os.Args[2:])
 	case "uninstall":
 		cmdUninstall(os.Args[2:])
 	case "version":
@@ -46,6 +48,9 @@ Usage:
   fleet-agent run            Start the agent daemon
   fleet-agent configure      Write or update config
   fleet-agent show-config    Print current config
+  fleet-agent header add     Add a static extra header (--header "Name: Value")
+  fleet-agent header list    List configured extra headers
+  fleet-agent header clear   Remove all configured extra headers
   fleet-agent uninstall      Stop service, remove binary and config
   fleet-agent version        Print version
 
@@ -140,5 +145,61 @@ func cmdShowConfig(args []string) {
 		for k, v := range cfg.Labels {
 			fmt.Printf("  %s: %s\n", k, v)
 		}
+	}
+	if len(cfg.ExtraHeaders) > 0 {
+		fmt.Println("extra_headers:")
+		for k := range cfg.ExtraHeaders {
+			fmt.Printf("  %s: ***\n", k)
+		}
+	}
+}
+
+// cmdHeader adds or lists static extra headers.
+func cmdHeader(args []string) {
+	if len(args) < 1 {
+		log.Fatal("FATAL: expected a subcommand: add, list, clear")
+	}
+
+	switch args[0] {
+	case "add":
+		fs := flag.NewFlagSet("header add", flag.ExitOnError)
+		configPath := fs.String("config", defaultConfigPath, "path to config file")
+		header := fs.String("header", "", "header to add, e.g. \"Name: Value\"")
+		fs.Parse(args[1:])
+
+		if *header == "" {
+			log.Fatal("FATAL: --header is required, e.g. --header \"CF-Access-Client-Id: abc123\"")
+		}
+		if err := AddHeader(*configPath, *header); err != nil {
+			log.Fatalf("FATAL: %v", err)
+		}
+		fmt.Println("header added")
+	case "list":
+		fs := flag.NewFlagSet("header list", flag.ExitOnError)
+		configPath := fs.String("config", defaultConfigPath, "path to config file")
+		fs.Parse(args[1:])
+
+		cfg, err := LoadConfig(*configPath)
+		if err != nil {
+			log.Fatalf("FATAL: %v", err)
+		}
+		if len(cfg.ExtraHeaders) == 0 {
+			fmt.Println("no extra headers configured")
+			return
+		}
+		for k, v := range cfg.ExtraHeaders {
+			fmt.Printf("%s: %s\n", k, v)
+		}
+	case "clear":
+		fs := flag.NewFlagSet("header clear", flag.ExitOnError)
+		configPath := fs.String("config", defaultConfigPath, "path to config file")
+		fs.Parse(args[1:])
+
+		if err := ClearHeaders(*configPath); err != nil {
+			log.Fatalf("FATAL: %v", err)
+		}
+		fmt.Println("headers cleared")
+	default:
+		log.Fatalf("FATAL: unknown header subcommand: %s", args[0])
 	}
 }

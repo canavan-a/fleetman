@@ -8,22 +8,27 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
 // Client talks to the fleetman server's HTTP API using a master key.
 type Client struct {
-	base string
-	key  string
-	http *http.Client
+	base         string
+	key          string
+	extraHeaders map[string]string
+	http         *http.Client
 }
 
 // New creates a Client for the given server base URL and master API key.
-func New(base, key string) *Client {
+// extraHeaders are static headers (e.g. for a Cloudflare Access-style WAF in
+// front of the server) merged into every request; a nil map is fine.
+func New(base, key string, extraHeaders map[string]string) *Client {
 	return &Client{
-		base: base,
-		key:  key,
-		http: &http.Client{Timeout: 15 * time.Second},
+		base:         base,
+		key:          key,
+		extraHeaders: extraHeaders,
+		http:         &http.Client{Timeout: 15 * time.Second},
 	}
 }
 
@@ -103,6 +108,12 @@ func (c *Client) do(method, path string, body interface{}, out interface{}) erro
 	req.Header.Set("Authorization", "Bearer "+c.key)
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
+	}
+	for k, v := range c.extraHeaders {
+		if strings.EqualFold(k, "Authorization") {
+			continue
+		}
+		req.Header.Set(k, v)
 	}
 
 	resp, err := c.http.Do(req)

@@ -157,7 +157,7 @@ func newMainModel(cfg *Config, state *TUIState) mainModel {
 		state = &TUIState{}
 	}
 	return mainModel{
-		client:             api.New(cfg.BaseURL(), cfg.MasterKey),
+		client:             api.New(cfg.BaseURL(), cfg.MasterKey, cfg.ExtraHeaders),
 		repo:               cfg.EffectiveRepo(),
 		host:               cfg.Server,
 		insecure:           cfg.Insecure,

@@ -1,4 +1,4 @@
-// fleet-master is the control CLI for the fleet manager system.
+// fleetman is the control CLI for the fleet manager system.
 // It talks to the server's HTTP API to provision devices, send commands,
 // and display results.
 package main
@@ -48,6 +48,10 @@ func main() {
 		cmdLogin(path, flags)
 	case "logout":
 		cmdLogout(path)
+	case "header":
+		cmdHeader(path, flag.Args()[1:])
+	case "help", "--help", "-h":
+		usage()
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n", flag.Arg(0))
 		usage()
@@ -56,10 +60,10 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintf(os.Stderr, `fleet-master — fleet manager control CLI
+	fmt.Fprintf(os.Stderr, `fleetman — fleet manager control CLI
 
 Usage:
-  fleet-master [flags] <command>
+  fleetman [flags] <command>
 
 Global flags:
   --config <path>      Config file path (default: ~/.fleetman/config.yaml)
@@ -69,8 +73,11 @@ Global flags:
   --repo <owner/repo>  GitHub repo for install-script URLs (default: `+defaultRepo+`)
 
 Commands:
-  login     Save server URL and master key to config
-  logout    Remove saved credentials
+  login         Save server URL and master key to config
+  logout        Remove saved credentials
+  header add    Add a static extra header (--header "Name: Value")
+  header list   List configured extra headers
+  header clear  Remove all configured extra headers
 
 `)
 }
@@ -147,6 +154,47 @@ func cmdLogout(path string) {
 		log.Fatalf("FATAL: %v", err)
 	}
 	fmt.Println("Logged out.")
+}
+
+// cmdHeader adds or lists static extra headers.
+func cmdHeader(path string, args []string) {
+	if len(args) < 1 {
+		log.Fatal("FATAL: expected a subcommand: add, list, clear")
+	}
+
+	switch args[0] {
+	case "add":
+		fs := flag.NewFlagSet("header add", flag.ExitOnError)
+		header := fs.String("header", "", "header to add, e.g. \"Name: Value\"")
+		fs.Parse(args[1:])
+
+		if *header == "" {
+			log.Fatal("FATAL: --header is required, e.g. --header \"CF-Access-Client-Id: abc123\"")
+		}
+		if err := AddHeader(path, *header); err != nil {
+			log.Fatalf("FATAL: %v", err)
+		}
+		fmt.Println("header added")
+	case "list":
+		cfg, err := LoadConfig(path)
+		if err != nil {
+			log.Fatalf("FATAL: %v", err)
+		}
+		if cfg == nil || len(cfg.ExtraHeaders) == 0 {
+			fmt.Println("no extra headers configured")
+			return
+		}
+		for k, v := range cfg.ExtraHeaders {
+			fmt.Printf("%s: %s\n", k, v)
+		}
+	case "clear":
+		if err := ClearHeaders(path); err != nil {
+			log.Fatalf("FATAL: %v", err)
+		}
+		fmt.Println("headers cleared")
+	default:
+		log.Fatalf("FATAL: unknown header subcommand: %s", args[0])
+	}
 }
 
 // requireConfig loads the config, auto-launching the login TUI/prompt if

@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/canavan-a/fleetman/internal/headers"
 	"gopkg.in/yaml.v3"
 )
 
@@ -28,10 +29,11 @@ const defaultRepo = "canavan-a/fleetman"
 // is treated as an explicit opt-in to plaintext and normalized away into
 // Insecure=true so the stored form stays scheme-free everywhere.
 type Config struct {
-	Server    string `yaml:"server"`
-	Insecure  bool   `yaml:"insecure,omitempty"`
-	MasterKey string `yaml:"master_key"`
-	Repo      string `yaml:"repo,omitempty"` // GitHub "owner/repo" for install-script URLs
+	Server       string            `yaml:"server"`
+	Insecure     bool              `yaml:"insecure,omitempty"`
+	MasterKey    string            `yaml:"master_key"`
+	Repo         string            `yaml:"repo,omitempty"` // GitHub "owner/repo" for install-script URLs
+	ExtraHeaders map[string]string `yaml:"extra_headers,omitempty"`
 }
 
 // IsComplete reports whether the config has all required fields.
@@ -123,7 +125,76 @@ func LoadConfig(path string) (*Config, error) {
 	}
 	// Migrate any older scheme-prefixed server value stored on disk.
 	cfg.setServer(cfg.Server)
+
+	if v := os.Getenv("FLEET_EXTRA_HEADERS"); v != "" {
+		parsed, err := parseHeadersEnv(v)
+		if err != nil {
+			return nil, fmt.Errorf("parse FLEET_EXTRA_HEADERS: %w", err)
+		}
+		cfg.ExtraHeaders = parsed
+	}
+
 	return &cfg, nil
+}
+
+// parseHeadersEnv parses the comma-separated "Name1=Value1,Name2=Value2"
+// format used by FLEET_EXTRA_HEADERS.
+func parseHeadersEnv(v string) (map[string]string, error) {
+	result := make(map[string]string)
+	for _, pair := range strings.Split(v, ",") {
+		pair = strings.TrimSpace(pair)
+		if pair == "" {
+			continue
+		}
+		parts := strings.SplitN(pair, "=", 2)
+		if len(parts) != 2 {
+			return nil, fmt.Errorf("invalid header pair %q, expected Name=Value", pair)
+		}
+		name := strings.TrimSpace(parts[0])
+		if strings.EqualFold(name, "Authorization") {
+			return nil, fmt.Errorf("cannot set Authorization as an extra header")
+		}
+		result[name] = strings.TrimSpace(parts[1])
+	}
+	return result, nil
+}
+
+// AddHeader sets an extra static header ("Name: Value") in the config and saves.
+func AddHeader(path, kv string) error {
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		return err
+	}
+	if cfg == nil {
+		return fmt.Errorf("no config found at %s; run 'fleetman login' first", path)
+	}
+
+	name, value, err := headers.Parse(kv)
+	if err != nil {
+		return err
+	}
+
+	if cfg.ExtraHeaders == nil {
+		cfg.ExtraHeaders = make(map[string]string)
+	}
+	cfg.ExtraHeaders[name] = value
+
+	return SaveConfig(path, cfg)
+}
+
+// ClearHeaders removes all extra headers from the config and saves.
+func ClearHeaders(path string) error {
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		return err
+	}
+	if cfg == nil {
+		return fmt.Errorf("no config found at %s; run 'fleetman login' first", path)
+	}
+
+	cfg.ExtraHeaders = nil
+
+	return SaveConfig(path, cfg)
 }
 
 // SaveConfig writes cfg to path with 0600 permissions.

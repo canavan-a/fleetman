@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/canavan-a/fleetman/internal/headers"
 	"gopkg.in/yaml.v3"
 )
 
@@ -15,10 +16,11 @@ const (
 
 // Config holds the agent configuration loaded from file + env overrides.
 type Config struct {
-	Server   string            `yaml:"server"`
-	Token    string            `yaml:"token"`
-	DeviceID string            `yaml:"device_id"`
-	Labels   map[string]string `yaml:"labels"`
+	Server       string            `yaml:"server"`
+	Token        string            `yaml:"token"`
+	DeviceID     string            `yaml:"device_id"`
+	Labels       map[string]string `yaml:"labels"`
+	ExtraHeaders map[string]string `yaml:"extra_headers,omitempty"`
 }
 
 // LoadConfig reads the config file, applies env overrides, and validates.
@@ -56,6 +58,13 @@ func LoadConfig(path string) (*Config, error) {
 	}
 	if v := os.Getenv("FLEET_DEVICE_ID"); v != "" {
 		cfg.DeviceID = v
+	}
+	if v := os.Getenv("FLEET_EXTRA_HEADERS"); v != "" {
+		parsed, err := parseHeadersEnv(v)
+		if err != nil {
+			return nil, fmt.Errorf("parse FLEET_EXTRA_HEADERS: %w", err)
+		}
+		cfg.ExtraHeaders = parsed
 	}
 
 	// Validate required fields.
@@ -119,4 +128,58 @@ func SetLabel(path, kv string) error {
 	cfg.Labels[parts[0]] = parts[1]
 
 	return SaveConfig(path, cfg)
+}
+
+// AddHeader sets an extra static header ("Name: Value") in the config and saves.
+func AddHeader(path, kv string) error {
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		return err
+	}
+
+	name, value, err := headers.Parse(kv)
+	if err != nil {
+		return err
+	}
+
+	if cfg.ExtraHeaders == nil {
+		cfg.ExtraHeaders = make(map[string]string)
+	}
+	cfg.ExtraHeaders[name] = value
+
+	return SaveConfig(path, cfg)
+}
+
+// ClearHeaders removes all extra headers from the config and saves.
+func ClearHeaders(path string) error {
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		return err
+	}
+
+	cfg.ExtraHeaders = nil
+
+	return SaveConfig(path, cfg)
+}
+
+// parseHeadersEnv parses the comma-separated "Name1=Value1,Name2=Value2"
+// format used by FLEET_EXTRA_HEADERS.
+func parseHeadersEnv(v string) (map[string]string, error) {
+	result := make(map[string]string)
+	for _, pair := range strings.Split(v, ",") {
+		pair = strings.TrimSpace(pair)
+		if pair == "" {
+			continue
+		}
+		parts := strings.SplitN(pair, "=", 2)
+		if len(parts) != 2 {
+			return nil, fmt.Errorf("invalid header pair %q, expected Name=Value", pair)
+		}
+		name := strings.TrimSpace(parts[0])
+		if strings.EqualFold(name, "Authorization") {
+			return nil, fmt.Errorf("cannot set Authorization as an extra header")
+		}
+		result[name] = strings.TrimSpace(parts[1])
+	}
+	return result, nil
 }

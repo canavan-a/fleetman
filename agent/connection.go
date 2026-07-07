@@ -102,6 +102,12 @@ func (a *Agent) connectAndServe() error {
 func (a *Agent) dial() error {
 	header := http.Header{}
 	header.Set("Authorization", "Bearer "+a.cfg.Token)
+	for k, v := range a.cfg.ExtraHeaders {
+		if strings.EqualFold(k, "Authorization") {
+			continue
+		}
+		header.Set(k, v)
+	}
 
 	url := normalizeServerURL(a.cfg.Server) + "/ws"
 	conn, _, err := websocket.DefaultDialer.Dial(url, header)
