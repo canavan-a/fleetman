@@ -58,12 +58,6 @@ func (h *Hub) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 
 	log.Printf("device %s connected", deviceID)
-	for k, v := range r.Header {
-		if strings.EqualFold(k, "Authorization") {
-			continue
-		}
-		log.Printf("device %s header: %s: %s", deviceID, k, strings.Join(v, ","))
-	}
 	h.Registry.SetActive(deviceID, conn)
 
 	// Cleanup on disconnect.

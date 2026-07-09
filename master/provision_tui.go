@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/textinput"
@@ -27,17 +28,19 @@ type tokenMintedMsg struct {
 const (
 	provFieldName = iota
 	provFieldTags
-	provFieldCount
+	provNumTextFields
 )
 
 type provisionModel struct {
-	client   *api.Client
-	repo     string
-	host     string // bare server host — implies wss unless insecure
-	insecure bool
-	tags     []string
+	client         *api.Client
+	repo           string
+	host           string // bare server host — implies wss unless insecure
+	insecure       bool
+	tags           []string
+	extraHeaders   map[string]string
+	includeHeaders bool // space toggles (when focused on the header-toggle field); whether to append master's --header flags
 
-	inputs  [provFieldCount]textinput.Model
+	inputs  [provNumTextFields]textinput.Model
 	focused int
 	stage   provisionStage
 
@@ -53,7 +56,7 @@ type provisionModel struct {
 	closed    bool
 }
 
-func newProvisionModel(client *api.Client, repo, host string, insecure bool, tags []string) provisionModel {
+func newProvisionModel(client *api.Client, repo, host string, insecure bool, tags []string, extraHeaders map[string]string) provisionModel {
 	name := textinput.New()
 	name.Placeholder = "e.g. web1"
 	name.Width = 40
@@ -67,16 +70,45 @@ func newProvisionModel(client *api.Client, repo, host string, insecure bool, tag
 	tagsInput.CharLimit = 128
 
 	return provisionModel{
-		client:   client,
-		repo:     repo,
-		host:     host,
-		insecure: insecure,
-		tags:     tags,
-		inputs:   [provFieldCount]textinput.Model{name, tagsInput},
+		client:         client,
+		repo:           repo,
+		host:           host,
+		insecure:       insecure,
+		tags:           tags,
+		extraHeaders:   extraHeaders,
+		includeHeaders: len(extraHeaders) > 0,
+		inputs:         [provNumTextFields]textinput.Model{name, tagsInput},
 	}
 }
 
 func (m provisionModel) Init() tea.Cmd { return textinput.Blink }
+
+// headerToggleField is the pseudo-field index for the "include master
+// headers" toggle — it comes after the real text inputs and only
+// participates in the tab order when there are headers to offer.
+const headerToggleField = provNumTextFields
+
+// fieldCount returns how many fields (text inputs plus the header toggle,
+// if applicable) participate in tab/enter navigation.
+func (m provisionModel) fieldCount() int {
+	if len(m.extraHeaders) > 0 {
+		return provNumTextFields + 1
+	}
+	return provNumTextFields
+}
+
+// setFocus updates m.focused and blurs/focuses the text inputs accordingly.
+// No-op on text-input focus state when landing on the header-toggle field.
+func (m *provisionModel) setFocus(i int) {
+	m.focused = i
+	for idx := range m.inputs {
+		if idx == m.focused {
+			m.inputs[idx].Focus()
+		} else {
+			m.inputs[idx].Blur()
+		}
+	}
+}
 
 func (m provisionModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
@@ -95,34 +127,27 @@ func (m provisionModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.focused == provFieldTags && m.acceptTagGhost() {
 					return m, nil
 				}
-				m.focused = (m.focused + 1) % provFieldCount
-				for i := range m.inputs {
-					if i == m.focused {
-						m.inputs[i].Focus()
-					} else {
-						m.inputs[i].Blur()
-					}
-				}
+				m.setFocus((m.focused + 1) % m.fieldCount())
 				return m, textinput.Blink
 			case tea.KeyShiftTab:
-				m.focused = (m.focused - 1 + provFieldCount) % provFieldCount
-				for i := range m.inputs {
-					if i == m.focused {
-						m.inputs[i].Focus()
-					} else {
-						m.inputs[i].Blur()
-					}
-				}
+				m.setFocus((m.focused - 1 + m.fieldCount()) % m.fieldCount())
 				return m, textinput.Blink
 			case tea.KeyEnter:
-				if m.focused < provFieldCount-1 {
-					m.inputs[m.focused].Blur()
-					m.focused++
-					m.inputs[m.focused].Focus()
+				if m.focused < m.fieldCount()-1 {
+					m.setFocus(m.focused + 1)
 					return m, textinput.Blink
 				}
 				m.stage = provisionSubmitting
 				return m, m.mint()
+			case tea.KeySpace:
+				if m.focused == headerToggleField {
+					m.includeHeaders = !m.includeHeaders
+					return m, nil
+				}
+			}
+			if m.focused == headerToggleField {
+				// Toggle field has no text input to forward keys to.
+				return m, nil
 			}
 			var cmd tea.Cmd
 			m.inputs[m.focused], cmd = m.inputs[m.focused].Update(msg)
@@ -294,6 +319,16 @@ func (m provisionModel) installArgs() (installURL string, flags []string) {
 	if m.resultName != "" {
 		flags = append(flags, "--role "+m.resultName)
 	}
+	if m.includeHeaders && len(m.extraHeaders) > 0 {
+		keys := make([]string, 0, len(m.extraHeaders))
+		for k := range m.extraHeaders {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			flags = append(flags, fmt.Sprintf("--header %q", k+": "+m.extraHeaders[k]))
+		}
+	}
 	return installURL, flags
 }
 
@@ -352,6 +387,18 @@ func (m provisionModel) View() string {
 		b.WriteString("\n")
 		b.WriteString(m.renderTagsLine())
 		b.WriteString("\n\n")
+		if len(m.extraHeaders) > 0 {
+			prefix := "  "
+			if m.focused == headerToggleField {
+				prefix = "▸ "
+			}
+			if m.includeHeaders {
+				b.WriteString(prefix + okStyle.Render(fmt.Sprintf("[x] include %d master header(s) (space to toggle)", len(m.extraHeaders))))
+			} else {
+				b.WriteString(prefix + suggestStyle.Render("[ ] include master headers (space to toggle)"))
+			}
+			b.WriteString("\n\n")
+		}
 		if m.err != "" {
 			b.WriteString(errStyle.Render("✗ " + m.err))
 			b.WriteString("\n")

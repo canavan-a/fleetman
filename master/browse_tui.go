@@ -115,10 +115,11 @@ func fetchData(client *api.Client) tea.Cmd {
 // --- root model ---
 
 type mainModel struct {
-	client   *api.Client
-	repo     string
-	host     string // bare server host, e.g. "fleetman.example.com"
-	insecure bool
+	client       *api.Client
+	repo         string
+	host         string // bare server host, e.g. "fleetman.example.com"
+	insecure     bool
+	extraHeaders map[string]string
 
 	focus     pane
 	tags      []string
@@ -161,6 +162,7 @@ func newMainModel(cfg *Config, state *TUIState) mainModel {
 		repo:               cfg.EffectiveRepo(),
 		host:               cfg.Server,
 		insecure:           cfg.Insecure,
+		extraHeaders:       cfg.ExtraHeaders,
 		selected:           make(map[string]api.Device),
 		activeTag:          state.ActiveTag,
 		compact:            state.Compact,
@@ -376,7 +378,7 @@ func (m mainModel) handleBrowseKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "p":
 		m.mode = modeProvision
-		m.subModel = newProvisionModel(m.client, m.repo, m.host, m.insecure, m.tags)
+		m.subModel = newProvisionModel(m.client, m.repo, m.host, m.insecure, m.tags, m.extraHeaders)
 		return m, nil
 
 	case "c", "r":

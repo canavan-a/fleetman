@@ -8,6 +8,7 @@ set -e
 #   curl -fsSL https://github.com/{{REPO}}/releases/latest/download/agent-install.sh | sudo sh
 #   curl -fsSL ... | sudo sh -s -- --server wss://... --token abc --device-id dev-123
 #   curl -fsSL ... | sudo sh -s -- --unattended --server wss://... --token abc --device-id dev-123
+#   curl -fsSL ... | sudo sh -s -- --server wss://... --token abc --device-id dev-123 --header "CF-Access-Client-Id: abc" --header "CF-Access-Client-Secret: def"
 
 REPO="{{REPO}}"
 VERSION="{{VERSION}}"
@@ -20,6 +21,7 @@ DEVICE_ID=""
 TOKEN=""
 ROLE=""
 INSTALL_DIR="/usr/local/bin"
+HEADERS="" # accumulated "Name: Value" lines, one per --header flag
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -29,6 +31,8 @@ while [ $# -gt 0 ]; do
     --token)         TOKEN="$2"; shift ;;
     --role)          ROLE="$2"; shift ;;
     --install-dir)   INSTALL_DIR="$2"; shift ;;
+    --header)        HEADERS="${HEADERS}${2}
+"; shift ;;
     *) echo "unknown flag: $1"; exit 1 ;;
   esac
   shift
@@ -172,6 +176,15 @@ device_id: ${DEVICE_ID}
 labels:
   role: ${ROLE}
 EOF
+if [ -n "$HEADERS" ]; then
+  echo "extra_headers:" >> /etc/fleet-agent/config.yaml
+  printf '%s' "$HEADERS" | while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    name=$(printf '%s' "$line" | cut -d: -f1 | sed 's/[[:space:]]*$//')
+    value=$(printf '%s' "$line" | cut -d: -f2- | sed 's/^[[:space:]]*//')
+    printf '  "%s": "%s"\n' "$name" "$value" >> /etc/fleet-agent/config.yaml
+  done
+fi
 chmod 600 /etc/fleet-agent/config.yaml
 
 # ---- register and start service ----
