@@ -26,6 +26,7 @@ type mode int
 const (
 	modeBrowse mode = iota
 	modeTagPicker
+	modeUntagPicker
 	modeTagNew
 	modeUntagConfirm
 	modeProvision
@@ -148,6 +149,7 @@ type mainModel struct {
 	mode             mode
 	subModel         tea.Model
 	pendingTagDelete string
+	pendingUntagTag  string        // tag doUntag() removes from selected devices; set by the "d" (active filter) and "x" (untag picker) flows
 	lastCmd          *cmdModeModel // last command-mode session, restored on re-entry with the same tag/target
 
 	quitting bool
@@ -364,6 +366,15 @@ func (m mainModel) handleBrowseKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.subModel = newTagPickerModel(m.tags)
 		return m, nil
 
+	case "x":
+		if len(m.selected) == 0 {
+			m.err = "select devices first (space)"
+			return m, nil
+		}
+		m.mode = modeUntagPicker
+		m.subModel = newUntagPickerModel(m.selectedTagsUnion())
+		return m, nil
+
 	case "n":
 		m.mode = modeTagNew
 		label := "Tag name"
@@ -442,6 +453,7 @@ func (m mainModel) handleDeleteKey() (tea.Model, tea.Cmd) {
 	}
 
 	if m.activeTag != "" {
+		m.pendingUntagTag = m.activeTag
 		m.mode = modeUntagConfirm
 		m.subModel = newConfirmModel(fmt.Sprintf("Remove %d device(s) from %q?", len(m.selected), m.activeTag))
 		return m, nil
@@ -472,6 +484,12 @@ func (m mainModel) updateSubMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if sm.cancelled || sm.chosen == "" {
 				m.mode = modeBrowse
 				m.subModel = nil
+				return m, nil
+			}
+			if m.mode == modeUntagPicker {
+				m.pendingUntagTag = sm.chosen
+				m.mode = modeUntagConfirm
+				m.subModel = newConfirmModel(fmt.Sprintf("Remove %d device(s) from %q?", len(m.selected), sm.chosen))
 				return m, nil
 			}
 			return m, m.doTagDevices(sm.chosen)
@@ -556,6 +574,23 @@ func (m mainModel) selectedIDs() []string {
 	return ids
 }
 
+// selectedTagsUnion returns the sorted, de-duplicated set of tags present on
+// at least one selected device — the candidate list for the untag picker.
+func (m mainModel) selectedTagsUnion() []string {
+	seen := make(map[string]bool)
+	for _, d := range m.selected {
+		for _, t := range d.Tags {
+			seen[t] = true
+		}
+	}
+	tags := make([]string, 0, len(seen))
+	for t := range seen {
+		tags = append(tags, t)
+	}
+	sort.Strings(tags)
+	return tags
+}
+
 func (m mainModel) doTagDevices(tag string) tea.Cmd {
 	ids := m.selectedIDs()
 	client := m.client
@@ -591,7 +626,7 @@ func (m mainModel) doCreateAndTag(tag string) tea.Cmd {
 
 func (m mainModel) doUntag() tea.Cmd {
 	ids := m.selectedIDs()
-	tag := m.activeTag
+	tag := m.pendingUntagTag
 	client := m.client
 	return func() tea.Msg {
 		return actionDoneMsg{err: client.UntagDevices(tag, ids)}
@@ -646,7 +681,7 @@ func (m mainModel) View() string {
 			return pm.View()
 		}
 		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, m.subModel.View())
-	case modeTagPicker, modeTagNew, modeUntagConfirm, modeDeleteConfirm, modeDeleteTagConfirm:
+	case modeTagPicker, modeUntagPicker, modeTagNew, modeUntagConfirm, modeDeleteConfirm, modeDeleteTagConfirm:
 		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, m.subModel.View())
 	case modeCommand:
 		return m.subModel.View()
@@ -718,7 +753,7 @@ func (m mainModel) renderHeader() string {
 }
 
 func (m mainModel) renderFooter() string {
-	return hintBarStyle.Render("[space] select  [a] tag  [n] new tag  [d] delete (tag under cursor, or untag/delete selected)  [p] provision  [c/r] run cmd  [b] compact  [q] quit")
+	return hintBarStyle.Render("[space] select  [a] tag  [x] untag  [n] new tag  [d] delete (tag under cursor, or untag/delete selected)  [p] provision  [c/r] run cmd  [b] compact  [q] quit")
 }
 
 func (m mainModel) renderTagsPane(w, h int) string {
@@ -783,6 +818,16 @@ func (m mainModel) renderDevicesPane(w, h int) string {
 		b.WriteString(dimStyle.Render("no devices"))
 	}
 
+	// Name column fills whatever room is left in the pane after the other
+	// fixed-width fields (marker, status dot, checkbox, version, arch) and
+	// their separating spaces, so wider terminals show fuller device names
+	// instead of always truncating at a fixed 16 chars.
+	const fixedFieldsWidth = 2 + 1 + 1 + 3 + 1 + 1 + 8 + 1 + 8 // marker+dot+sp+checkbox+sp+sp+version+sp+arch
+	nameW := w - fixedFieldsWidth - 4                          // -4 for pane border/padding
+	if nameW < 12 {
+		nameW = 12
+	}
+
 	for i, d := range m.devices {
 		_, sel := m.selected[d.DeviceID]
 		marker := "  "
@@ -797,7 +842,7 @@ func (m mainModel) renderDevicesPane(w, h int) string {
 		if version == "" {
 			version = "—"
 		}
-		line := fmt.Sprintf("%s%s %s %-16s %-8s %-8s", marker, onlineDot(d.Online()), checkbox, truncate(deviceName(d), 16), version, d.Arch)
+		line := fmt.Sprintf("%s%s %s %-*s %-8s %-8s", marker, onlineDot(d.Online()), checkbox, nameW, truncate(deviceName(d), nameW), version, d.Arch)
 		if sel {
 			line = rowSelectedStyle.Render(line)
 		} else if i == m.devCursor && m.focus == paneDevices {

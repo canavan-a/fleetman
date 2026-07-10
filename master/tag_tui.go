@@ -106,15 +106,32 @@ func (m textInputModel) View() string {
 // --- tag picker sub-model ---
 
 type tagPickerModel struct {
+	title     string
 	tags      []string
 	cursor    int
 	done      bool
 	cancelled bool
 	chosen    string
+	emptyMsg  string
 }
 
 func newTagPickerModel(tags []string) tagPickerModel {
-	return tagPickerModel{tags: tags}
+	return tagPickerModel{
+		title:    "Add to tag",
+		tags:     tags,
+		emptyMsg: "no tags yet — press [n] from browse to create one",
+	}
+}
+
+// newUntagPickerModel builds a picker scoped to the tags actually present on
+// the selected devices, so removing a tag can't be pointed at one that
+// doesn't apply to any of them.
+func newUntagPickerModel(tags []string) tagPickerModel {
+	return tagPickerModel{
+		title:    "Remove tag",
+		tags:     tags,
+		emptyMsg: "selected device(s) have no tags",
+	}
 }
 
 func (m tagPickerModel) Init() tea.Cmd { return nil }
@@ -147,10 +164,10 @@ func (m tagPickerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m tagPickerModel) View() string {
 	var b strings.Builder
-	b.WriteString(paneTitleStyle.Render("Add to tag"))
+	b.WriteString(paneTitleStyle.Render(m.title))
 	b.WriteString("\n\n")
 	if len(m.tags) == 0 {
-		b.WriteString(dimStyle.Render("no tags yet — press [n] from browse to create one"))
+		b.WriteString(dimStyle.Render(m.emptyMsg))
 	}
 	for i, t := range m.tags {
 		if i == m.cursor {
