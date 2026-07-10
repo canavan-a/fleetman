@@ -31,6 +31,41 @@ const (
 	provNumTextFields
 )
 
+// fetcher selects which HTTP client the rendered install command pipes
+// through — not every target has curl (e.g. minimal/embedded images ship
+// only wget, some BSDs only fetch).
+type fetcher int
+
+const (
+	fetcherCurl fetcher = iota
+	fetcherWget
+	fetcherFetch
+)
+
+func (f fetcher) String() string {
+	switch f {
+	case fetcherWget:
+		return "wget"
+	case fetcherFetch:
+		return "fetch"
+	default:
+		return "curl"
+	}
+}
+
+// fetchPipe returns the shell command that downloads installURL and writes
+// it to stdout, ready to be piped into `sh`.
+func (f fetcher) fetchPipe(installURL string) string {
+	switch f {
+	case fetcherWget:
+		return fmt.Sprintf("wget -qO- %s", installURL)
+	case fetcherFetch:
+		return fmt.Sprintf("fetch -qo- %s", installURL)
+	default:
+		return fmt.Sprintf("curl -fsSL %s", installURL)
+	}
+}
+
 type provisionModel struct {
 	client         *api.Client
 	repo           string
@@ -50,6 +85,8 @@ type provisionModel struct {
 	err          string
 	clipMsg      string
 	showFull     bool
+	fetcher      fetcher // which downloader the install command is rendered for
+	noSudo       bool    // s toggles; drop the `sudo` prefix for already-root installs
 
 	done      bool
 	cancelled bool
@@ -160,6 +197,22 @@ func (m provisionModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				} else {
 					m.clipMsg = "copied to clipboard"
 				}
+				return m, nil
+			case "w":
+				m.fetcher = fetcherWget
+				m.clipMsg = ""
+				return m, nil
+			case "g":
+				m.fetcher = fetcherFetch
+				m.clipMsg = ""
+				return m, nil
+			case "u":
+				m.fetcher = fetcherCurl
+				m.clipMsg = ""
+				return m, nil
+			case "s":
+				m.noSudo = !m.noSudo
+				m.clipMsg = ""
 				return m, nil
 			case "v":
 				m.showFull = !m.showFull
@@ -337,7 +390,16 @@ func (m provisionModel) installArgs() (installURL string, flags []string) {
 // shell prompt.
 func (m provisionModel) installCmd() string {
 	installURL, flags := m.installArgs()
-	return fmt.Sprintf("curl -fsSL %s | sudo sh -s -- %s", installURL, strings.Join(flags, " "))
+	return fmt.Sprintf("%s | %ssh -s -- %s", m.fetcher.fetchPipe(installURL), m.sudoPrefix(), strings.Join(flags, " "))
+}
+
+// sudoPrefix returns "sudo " unless the noSudo toggle is set, for installs
+// already running as root (e.g. inside a container).
+func (m provisionModel) sudoPrefix() string {
+	if m.noSudo {
+		return ""
+	}
+	return "sudo "
 }
 
 // installCmdMultiline formats the same command with a shell line
@@ -348,7 +410,7 @@ func (m provisionModel) installCmd() string {
 func (m provisionModel) installCmdMultiline() string {
 	installURL, flags := m.installArgs()
 	var b strings.Builder
-	fmt.Fprintf(&b, "curl -fsSL %s | sudo sh -s -- \\\n", installURL)
+	fmt.Fprintf(&b, "%s | %ssh -s -- \\\n", m.fetcher.fetchPipe(installURL), m.sudoPrefix())
 	for i, f := range flags {
 		b.WriteString("  " + f)
 		if i < len(flags)-1 {
@@ -418,7 +480,11 @@ func (m provisionModel) View() string {
 		b.WriteString("\n\n")
 		b.WriteString(m.installCmdMultiline())
 		b.WriteString("\n\n")
-		b.WriteString(hintBarStyle.Render("v / enter / esc · back"))
+		sudoLabel := "sudo"
+		if m.noSudo {
+			sudoLabel = "no sudo (root)"
+		}
+		b.WriteString(hintBarStyle.Render(fmt.Sprintf("fetcher: %s    %s    [u] curl  [w] wget  [g] fetch  [s] toggle sudo    v / enter / esc · back", m.fetcher, sudoLabel)))
 		// Deliberately no border here: a bordered box puts a "│" on both
 		// sides of every line, and dragging a selection across multiple
 		// lines in a terminal captures those characters right along with
@@ -443,11 +509,19 @@ func (m provisionModel) View() string {
 	b.WriteString("\n\n")
 	b.WriteString(dimStyle.Render("Full install command is one press away:"))
 	b.WriteString("\n\n")
+	sudoLabel := "sudo"
+	if m.noSudo {
+		sudoLabel = "no sudo (root)"
+	}
+	b.WriteString(dimStyle.Render(fmt.Sprintf("fetcher: %s    %s", m.fetcher, sudoLabel)))
+	b.WriteString("\n")
 	if m.clipMsg != "" {
 		b.WriteString(okStyle.Render(m.clipMsg))
 	} else {
 		b.WriteString(hintBarStyle.Render("[c] copy install command"))
 	}
+	b.WriteString("\n")
+	b.WriteString(hintBarStyle.Render("[u] curl  [w] wget  [g] fetch  [s] toggle sudo"))
 	b.WriteString("\n")
 	b.WriteString(hintBarStyle.Render("[v] view full command    enter / esc · close"))
 	return paneFocusedStyle.Width(48).Render(b.String())

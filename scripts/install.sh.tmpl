@@ -352,8 +352,18 @@ case "$1" in
 esac
 INITSCRIPT
     chmod +x /etc/init.d/fleet-agent
-    update-rc.d fleet-agent defaults 2>/dev/null || true
-    service fleet-agent start
+    # Enable on boot: try update-rc.d (Debian/Ubuntu) first, chkconfig
+    # (RHEL/CentOS-family sysvinit) as a fallback for non-Debian systems.
+    if command -v update-rc.d >/dev/null 2>&1; then
+      update-rc.d fleet-agent defaults 2>/dev/null || true
+    elif command -v chkconfig >/dev/null 2>&1; then
+      chkconfig --add fleet-agent 2>/dev/null || true
+    fi
+    # Call the init script directly rather than via the `service` wrapper,
+    # which isn't guaranteed to exist on minimal/non-Debian sysvinit images
+    # — under `set -e` a missing `service` binary would abort here and
+    # silently skip starting the daemon.
+    /etc/init.d/fleet-agent start
     ;;
 esac
 
