@@ -97,15 +97,15 @@ detect_init() {
     echo "s6"; return
   fi
 
-  # BusyBox init
+  # BusyBox init — only when /sbin/init itself is BusyBox. A bare
+  # `command -v busybox` check is too broad: many full-sysvinit systems
+  # (with update-rc.d and real /etc/rc*.d dirs) also ship a busybox binary
+  # for utilities while running a real init as PID 1, which would
+  # misclassify them here and register the wrong service type.
   if [ -f /proc/1/comm ]; then
     PID1_NAME=$(cat /proc/1/comm 2>/dev/null || true)
     if [ "$PID1_NAME" = "init" ]; then
-      # Check if init is BusyBox
       if readlink /sbin/init 2>/dev/null | grep -q busybox; then
-        echo "busybox"; return
-      fi
-      if command -v busybox >/dev/null 2>&1; then
         echo "busybox"; return
       fi
     fi

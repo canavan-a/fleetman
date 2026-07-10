@@ -100,13 +100,6 @@ func isBusyBoxInit() bool {
 	if err == nil && strings.Contains(strings.ToLower(string(out)), "busybox") {
 		return true
 	}
-	// Check if busybox is available and provides init.
-	if _, err := exec.LookPath("busybox"); err == nil {
-		out, err := exec.Command("busybox", "--list").CombinedOutput()
-		if err == nil && strings.Contains(string(out), "init") {
-			return true
-		}
-	}
 	return false
 }
 

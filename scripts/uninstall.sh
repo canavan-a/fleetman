@@ -24,7 +24,6 @@ detect_init() {
     PID1_NAME=$(cat /proc/1/comm 2>/dev/null || true)
     if [ "$PID1_NAME" = "init" ]; then
       if readlink /sbin/init 2>/dev/null | grep -q busybox; then echo "busybox"; return; fi
-      if command -v busybox >/dev/null 2>&1; then echo "busybox"; return; fi
     fi
   fi
   echo "initd"
