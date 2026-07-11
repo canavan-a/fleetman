@@ -30,12 +30,43 @@ type Result struct {
 	Retcode   int    `json:"retcode"`
 }
 
+// ShellOpen is sent from server → agent to start a persistent shell session.
+type ShellOpen struct {
+	SessionID string `json:"session_id"`
+}
+
+// ShellInput is sent from server → agent, carrying a chunk of stdin to write
+// into an already-open shell session.
+type ShellInput struct {
+	SessionID string `json:"session_id"`
+	Data      string `json:"data"`
+}
+
+// ShellOutput is sent from agent → server, carrying a chunk of stdout/stderr
+// read from an open shell session as it arrives. Closed is set once the
+// session's shell process has exited — Data may still hold trailing output.
+type ShellOutput struct {
+	SessionID string `json:"session_id"`
+	Stream    string `json:"stream"` // "stdout" or "stderr"
+	Data      string `json:"data"`
+	Closed    bool   `json:"closed,omitempty"`
+}
+
+// ShellClose is sent from server → agent to terminate a shell session.
+type ShellClose struct {
+	SessionID string `json:"session_id"`
+}
+
 // Envelope wraps every WebSocket message with a type discriminator.
 type Envelope struct {
-	Type      string      `json:"type"`               // "heartbeat", "command", "result"
-	Heartbeat *Heartbeat  `json:"heartbeat,omitempty"`
-	Command   *Command    `json:"command,omitempty"`
-	Result    *Result     `json:"result,omitempty"`
+	Type        string       `json:"type"` // "heartbeat", "command", "result", "shell_open", "shell_input", "shell_output", "shell_close"
+	Heartbeat   *Heartbeat   `json:"heartbeat,omitempty"`
+	Command     *Command     `json:"command,omitempty"`
+	Result      *Result      `json:"result,omitempty"`
+	ShellOpen   *ShellOpen   `json:"shell_open,omitempty"`
+	ShellInput  *ShellInput  `json:"shell_input,omitempty"`
+	ShellOutput *ShellOutput `json:"shell_output,omitempty"`
+	ShellClose  *ShellClose  `json:"shell_close,omitempty"`
 }
 
 // Action constants.
@@ -47,7 +78,11 @@ const (
 
 // Envelope type constants.
 const (
-	TypeHeartbeat = "heartbeat"
-	TypeCommand   = "command"
-	TypeResult    = "result"
+	TypeHeartbeat   = "heartbeat"
+	TypeCommand     = "command"
+	TypeResult      = "result"
+	TypeShellOpen   = "shell_open"
+	TypeShellInput  = "shell_input"
+	TypeShellOutput = "shell_output"
+	TypeShellClose  = "shell_close"
 )

@@ -222,3 +222,43 @@ func (c *Client) GetCommand(id string) (CommandStatus, error) {
 	err := c.do(http.MethodGet, "/commands/"+id, nil, &resp)
 	return resp, err
 }
+
+// ShellChunk is one piece of streamed output from a shell session.
+type ShellChunk struct {
+	Stream string `json:"stream"`
+	Data   string `json:"data"`
+}
+
+// ShellOutput is the response from PollShellOutput.
+type ShellOutput struct {
+	Chunks []ShellChunk `json:"chunks"`
+	Offset int          `json:"offset"`
+	Closed bool         `json:"closed"`
+}
+
+// OpenShell starts a persistent shell session on the given device and
+// returns its session ID.
+func (c *Client) OpenShell(deviceID string) (string, error) {
+	var resp struct {
+		SessionID string `json:"session_id"`
+	}
+	err := c.do(http.MethodPost, "/shell", map[string]string{"device_id": deviceID}, &resp)
+	return resp.SessionID, err
+}
+
+// SendShellInput writes a chunk of stdin to an open shell session.
+func (c *Client) SendShellInput(sessionID, data string) error {
+	return c.do(http.MethodPost, "/shell/"+sessionID+"/input", map[string]string{"data": data}, nil)
+}
+
+// PollShellOutput fetches output chunks recorded after offset "since".
+func (c *Client) PollShellOutput(sessionID string, since int) (ShellOutput, error) {
+	var resp ShellOutput
+	err := c.do(http.MethodGet, fmt.Sprintf("/shell/%s/output?since=%d", sessionID, since), nil, &resp)
+	return resp, err
+}
+
+// CloseShell terminates a shell session.
+func (c *Client) CloseShell(sessionID string) error {
+	return c.do(http.MethodDelete, "/shell/"+sessionID, nil, nil)
+}

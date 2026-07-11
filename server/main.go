@@ -44,9 +44,11 @@ func main() {
 
 	registry := NewRegistry(db)
 	cmdStore  := NewCommandStore(db)
+	shellStore := NewShellStore()
 	hub := &Hub{
 		Registry: registry,
 		Commands: cmdStore,
+		Shells:   shellStore,
 	}
 
 	// --- Public API ---
@@ -77,6 +79,10 @@ func main() {
 	mux.Handle("GET /tags/{name}/devices",        auth(http.HandlerFunc(hub.HandleGetTagDevices)))
 	mux.Handle("POST /tags/{name}/devices",       auth(http.HandlerFunc(hub.HandleBulkTag)))
 	mux.Handle("DELETE /tags/{name}/devices",     auth(http.HandlerFunc(hub.HandleBulkUntag)))
+	mux.Handle("POST /shell",                     auth(http.HandlerFunc(hub.HandleOpenShell)))
+	mux.Handle("POST /shell/{id}/input",          auth(http.HandlerFunc(hub.HandleShellInput)))
+	mux.Handle("GET /shell/{id}/output",          auth(http.HandlerFunc(hub.HandleShellOutput)))
+	mux.Handle("DELETE /shell/{id}",              auth(http.HandlerFunc(hub.HandleCloseShell)))
 
 	// --- Admin server (localhost only, no auth) ---
 	if *adminAddr != "" {

@@ -26,6 +26,7 @@ const (
 type Hub struct {
 	Registry *Registry
 	Commands *CommandStore
+	Shells   *ShellStore
 }
 
 // --- WebSocket endpoint (device auth) ---
@@ -125,6 +126,11 @@ func (h *Hub) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 			if env.Result != nil {
 				res := env.Result
 				h.Commands.RecordResult(res.CommandID, deviceID, res.Stdout, res.Stderr, res.Retcode)
+			}
+		case wire.TypeShellOutput:
+			if env.ShellOutput != nil {
+				so := env.ShellOutput
+				h.Shells.AppendOutput(so.SessionID, so.Stream, so.Data, so.Closed)
 			}
 		default:
 			log.Printf("unknown message type from %s: %s", deviceID, env.Type)
@@ -386,6 +392,143 @@ func (h *Hub) HandleGetCommand(w http.ResponseWriter, r *http.Request) {
 		},
 		"results": enriched,
 	})
+}
+
+// --- Shell session handlers ---
+
+// postShellRequest is the JSON body for POST /shell.
+type postShellRequest struct {
+	DeviceID string `json:"device_id"`
+}
+
+// HandleOpenShell handles POST /shell.
+// Opens a persistent shell session on the target device and returns its session_id.
+func (h *Hub) HandleOpenShell(w http.ResponseWriter, r *http.Request) {
+	var req postShellRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.DeviceID == "" {
+		http.Error(w, `{"error":"device_id is required"}`, http.StatusBadRequest)
+		return
+	}
+
+	lc := h.Registry.GetConnection(req.DeviceID)
+	if lc == nil {
+		http.Error(w, `{"error":"device not connected"}`, http.StatusNotFound)
+		return
+	}
+
+	sessionID := uuid.New().String()
+	h.Shells.Open(sessionID, req.DeviceID)
+
+	env := wire.Envelope{
+		Type:      wire.TypeShellOpen,
+		ShellOpen: &wire.ShellOpen{SessionID: sessionID},
+	}
+	lc.connMu.Lock()
+	err := lc.conn.WriteJSON(env)
+	lc.connMu.Unlock()
+	if err != nil {
+		h.Shells.Close(sessionID)
+		http.Error(w, `{"error":"failed to open shell on device"}`, http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(map[string]string{"session_id": sessionID})
+	log.Printf("opened shell session %s on device %s", sessionID, req.DeviceID)
+}
+
+// postShellInputRequest is the JSON body for POST /shell/{id}/input.
+type postShellInputRequest struct {
+	Data string `json:"data"`
+}
+
+// HandleShellInput handles POST /shell/{id}/input.
+// Forwards a chunk of stdin to the agent-side shell session.
+func (h *Hub) HandleShellInput(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	rec := h.Shells.Get(id)
+	if rec == nil {
+		http.Error(w, `{"error":"session not found"}`, http.StatusNotFound)
+		return
+	}
+
+	var req postShellInputRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, `{"error":"invalid request body"}`, http.StatusBadRequest)
+		return
+	}
+
+	lc := h.Registry.GetConnection(rec.deviceID)
+	if lc == nil {
+		http.Error(w, `{"error":"device not connected"}`, http.StatusNotFound)
+		return
+	}
+
+	env := wire.Envelope{
+		Type:       wire.TypeShellInput,
+		ShellInput: &wire.ShellInput{SessionID: id, Data: req.Data},
+	}
+	lc.connMu.Lock()
+	err := lc.conn.WriteJSON(env)
+	lc.connMu.Unlock()
+	if err != nil {
+		http.Error(w, `{"error":"failed to send input to device"}`, http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+}
+
+// HandleShellOutput handles GET /shell/{id}/output?since=N.
+// Returns output chunks recorded after offset N, the new offset, and whether
+// the session has closed.
+func (h *Hub) HandleShellOutput(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	rec := h.Shells.Get(id)
+	if rec == nil {
+		http.Error(w, `{"error":"session not found"}`, http.StatusNotFound)
+		return
+	}
+
+	since := 0
+	if s := r.URL.Query().Get("since"); s != "" {
+		fmt.Sscanf(s, "%d", &since)
+	}
+
+	chunks, offset, closed := rec.ReadSince(since)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"chunks": chunks,
+		"offset": offset,
+		"closed": closed,
+	})
+}
+
+// HandleCloseShell handles DELETE /shell/{id}.
+// Tells the agent to terminate the session's shell process and forgets it server-side.
+func (h *Hub) HandleCloseShell(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	rec := h.Shells.Get(id)
+	if rec == nil {
+		http.Error(w, `{"error":"session not found"}`, http.StatusNotFound)
+		return
+	}
+
+	if lc := h.Registry.GetConnection(rec.deviceID); lc != nil {
+		env := wire.Envelope{
+			Type:       wire.TypeShellClose,
+			ShellClose: &wire.ShellClose{SessionID: id},
+		}
+		lc.connMu.Lock()
+		lc.conn.WriteJSON(env)
+		lc.connMu.Unlock()
+	}
+
+	h.Shells.Close(id)
+	w.WriteHeader(http.StatusOK)
+	log.Printf("closed shell session %s", id)
 }
 
 // releaseInfo holds the current release info per architecture.
