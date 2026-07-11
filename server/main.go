@@ -84,6 +84,8 @@ func main() {
 	mux.Handle("GET /shell/{id}/output",          auth(http.HandlerFunc(hub.HandleShellOutput)))
 	mux.Handle("DELETE /shell/{id}",              auth(http.HandlerFunc(hub.HandleCloseShell)))
 
+	go hub.ReapIdleShells()
+
 	// --- Admin server (localhost only, no auth) ---
 	if *adminAddr != "" {
 		adminMux := http.NewServeMux()

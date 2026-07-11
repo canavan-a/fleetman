@@ -33,7 +33,6 @@ const (
 	modeDeleteConfirm
 	modeDeleteTagConfirm
 	modeCommand
-	modeShell
 )
 
 const refreshInterval = 5 * time.Second
@@ -410,20 +409,6 @@ func (m mainModel) handleBrowseKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, m.subModel.Init()
 
-	case "s":
-		if m.focus != paneDevices || len(m.devices) == 0 {
-			m.err = "select a device to shell into (focus the devices pane)"
-			return m, nil
-		}
-		device := m.devices[m.devCursor]
-		if !device.Online() {
-			m.err = "device is offline"
-			return m, nil
-		}
-		m.mode = modeShell
-		m.subModel = newShellModeModel(m.client, device)
-		return m, m.subModel.Init()
-
 	case "b":
 		m.compact = !m.compact
 		return m, nil
@@ -481,9 +466,9 @@ func (m mainModel) handleDeleteKey() (tea.Model, tea.Cmd) {
 
 func (m mainModel) updateSubMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if keyMsg, ok := msg.(tea.KeyMsg); ok && keyMsg.String() == "esc" {
-		if m.mode == modeCommand || m.mode == modeShell {
-			// let command/shell mode handle its own esc (e.g. shell mode
-			// needs to close its session before exiting)
+		if m.mode == modeCommand {
+			// let command mode handle its own esc (it may need to close
+			// open shell sessions before exiting)
 		} else {
 			m.mode = modeBrowse
 			m.subModel = nil
@@ -554,12 +539,6 @@ func (m mainModel) updateSubMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if sm.exitRequested {
 			saved := sm
 			m.lastCmd = &saved
-			m.mode = modeBrowse
-			m.subModel = nil
-			return m, fetchData(m.client)
-		}
-	case shellModeModel:
-		if sm.exitRequested {
 			m.mode = modeBrowse
 			m.subModel = nil
 			return m, fetchData(m.client)
@@ -705,7 +684,7 @@ func (m mainModel) View() string {
 		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, m.subModel.View())
 	case modeTagPicker, modeUntagPicker, modeTagNew, modeUntagConfirm, modeDeleteConfirm, modeDeleteTagConfirm:
 		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, m.subModel.View())
-	case modeCommand, modeShell:
+	case modeCommand:
 		return m.subModel.View()
 	}
 
@@ -775,7 +754,7 @@ func (m mainModel) renderHeader() string {
 }
 
 func (m mainModel) renderFooter() string {
-	return hintBarStyle.Render("[space] select  [a] tag  [x] untag  [n] new tag  [d] delete (tag under cursor, or untag/delete selected)  [p] provision  [c/r] run cmd  [s] shell  [b] compact  [q] quit")
+	return hintBarStyle.Render("[space] select  [a] tag  [x] untag  [n] new tag  [d] delete (tag under cursor, or untag/delete selected)  [p] provision  [c/r] run cmd (:open shell)  [b] compact  [q] quit")
 }
 
 func (m mainModel) renderTagsPane(w, h int) string {

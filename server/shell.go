@@ -83,3 +83,54 @@ func (r *shellSessionRecord) ReadSince(offset int) ([]shellChunk, int, bool) {
 	}
 	return r.chunks[offset:], len(r.chunks), r.closed
 }
+
+// Touch records activity on a session (e.g. stdin received), resetting its
+// idle clock. No-op if the session doesn't exist.
+func (s *ShellStore) Touch(sessionID string) {
+	rec := s.Get(sessionID)
+	if rec == nil {
+		return
+	}
+	rec.mu.Lock()
+	rec.lastUsed = time.Now()
+	rec.mu.Unlock()
+}
+
+// expiredShell identifies a session whose agent-side process needs to be
+// told to terminate because nothing (input or output) has touched it in a
+// while — most commonly a master that crashed or lost its connection
+// without ever sending an explicit close.
+type expiredShell struct {
+	sessionID string
+	deviceID  string
+}
+
+// ReapIdle scans all sessions and:
+//   - returns sessions that are still running but have been idle (no
+//     stdin/stdout activity) longer than idleTimeout, so the caller can tell
+//     their agent to terminate the process;
+//   - prunes sessions that have already closed (process exited) and have
+//     sat unread longer than closedGrace, so the store doesn't grow
+//     unbounded when a master never polls the final "closed" chunk.
+func (s *ShellStore) ReapIdle(idleTimeout, closedGrace time.Duration) []expiredShell {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	now := time.Now()
+	var expired []expiredShell
+	for id, rec := range s.sessions {
+		rec.mu.Lock()
+		closed := rec.closed
+		idle := now.Sub(rec.lastUsed)
+		deviceID := rec.deviceID
+		rec.mu.Unlock()
+
+		switch {
+		case closed && idle >= closedGrace:
+			delete(s.sessions, id)
+		case !closed && idle >= idleTimeout:
+			expired = append(expired, expiredShell{sessionID: id, deviceID: deviceID})
+		}
+	}
+	return expired
+}

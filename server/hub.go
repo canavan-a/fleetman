@@ -20,6 +20,16 @@ const (
 	// WebSocket keepalive settings.
 	wsPingInterval = 5 * time.Second
 	wsPongTimeout  = 5 * time.Second
+
+	// Shell session idle expiry: a session with no stdin/stdout activity
+	// for shellIdleTimeout is told to terminate agent-side, so a master
+	// that crashed or lost its connection without sending an explicit
+	// close doesn't leave a bash process running forever. shellClosedGrace
+	// is how long an already-exited session's record is kept around for a
+	// slow/disconnected master to still poll its final output.
+	shellReapInterval = 30 * time.Second
+	shellIdleTimeout  = 15 * time.Minute
+	shellClosedGrace  = 2 * time.Minute
 )
 
 // Hub ties together the registry, command store, and WebSocket handling.
@@ -477,6 +487,7 @@ func (h *Hub) HandleShellInput(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.Shells.Touch(id)
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -529,6 +540,28 @@ func (h *Hub) HandleCloseShell(w http.ResponseWriter, r *http.Request) {
 	h.Shells.Close(id)
 	w.WriteHeader(http.StatusOK)
 	log.Printf("closed shell session %s", id)
+}
+
+// ReapIdleShells runs until stopped, periodically closing shell sessions
+// that have seen no stdin/stdout activity for shellIdleTimeout. Call it in
+// its own goroutine at startup — it never returns.
+func (h *Hub) ReapIdleShells() {
+	ticker := time.NewTicker(shellReapInterval)
+	defer ticker.Stop()
+	for range ticker.C {
+		for _, exp := range h.Shells.ReapIdle(shellIdleTimeout, shellClosedGrace) {
+			if lc := h.Registry.GetConnection(exp.deviceID); lc != nil {
+				env := wire.Envelope{
+					Type:       wire.TypeShellClose,
+					ShellClose: &wire.ShellClose{SessionID: exp.sessionID},
+				}
+				lc.connMu.Lock()
+				lc.conn.WriteJSON(env)
+				lc.connMu.Unlock()
+			}
+			log.Printf("shell session %s on device %s closed: idle timeout", exp.sessionID, exp.deviceID)
+		}
+	}
 }
 
 // releaseInfo holds the current release info per architecture.
