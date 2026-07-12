@@ -1,0 +1,14 @@
+# Feature flags gating which commands the master will send to an agent.
+#
+# min_agent_version is the lowest agent release (git tag) that understands
+# the feature's wire commands. Bump it in the same PR that ships the git
+# tag for a feature so masters never dispatch a command an older agent
+# will silently ignore or choke on.
+#
+# enabled is a fleet-wide kill switch, independent of agent version — flip
+# it to false to disable a feature for everyone without a release.
+features:
+  - name: shell
+    description: Persistent interactive shell sessions
+    min_agent_version: v0.4.0
+    enabled: true

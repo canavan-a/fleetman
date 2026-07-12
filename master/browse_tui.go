@@ -403,9 +403,12 @@ func (m mainModel) handleBrowseKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			restored.devices = m.devices
 			restored.client = m.client
 			restored.exitRequested = false
+			restored.width = m.width
 			m.subModel = restored
 		} else {
-			m.subModel = newCmdModeModel(m.client, m.repo, m.activeTag, m.devices, m.selected)
+			cm := newCmdModeModel(m.client, m.repo, m.activeTag, m.devices, m.selected)
+			cm.width = m.width
+			m.subModel = cm
 		}
 		return m, m.subModel.Init()
 
@@ -467,7 +470,8 @@ func (m mainModel) handleDeleteKey() (tea.Model, tea.Cmd) {
 func (m mainModel) updateSubMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if keyMsg, ok := msg.(tea.KeyMsg); ok && keyMsg.String() == "esc" {
 		if m.mode == modeCommand {
-			// let command mode handle its own esc (it might be in a nested state)
+			// let command mode handle its own esc (it may need to close
+			// open shell sessions before exiting)
 		} else {
 			m.mode = modeBrowse
 			m.subModel = nil
@@ -753,7 +757,7 @@ func (m mainModel) renderHeader() string {
 }
 
 func (m mainModel) renderFooter() string {
-	return hintBarStyle.Render("[space] select  [a] tag  [x] untag  [n] new tag  [d] delete (tag under cursor, or untag/delete selected)  [p] provision  [c/r] run cmd  [b] compact  [q] quit")
+	return hintBarStyle.Render("[space] select  [a] tag  [x] untag  [n] new tag  [d] delete (tag under cursor, or untag/delete selected)  [p] provision  [c/r] run cmd (:open shell)  [b] compact  [q] quit")
 }
 
 func (m mainModel) renderTagsPane(w, h int) string {

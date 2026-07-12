@@ -31,6 +31,9 @@ type Agent struct {
 	conn   *websocket.Conn
 	connMu sync.Mutex // protects writes to conn
 
+	shells   map[string]*shellSession // session_id → live shell session
+	shellsMu sync.Mutex
+
 	done chan struct{} // signals shutdown
 }
 
@@ -40,6 +43,7 @@ func NewAgent(cfg *Config, version string) *Agent {
 		cfg:     cfg,
 		host:    DetectHost(),
 		version: version,
+		shells:  make(map[string]*shellSession),
 		done:    make(chan struct{}),
 	}
 }
@@ -92,8 +96,23 @@ func (a *Agent) connectAndServe() error {
 			continue
 		}
 
-		if env.Type == wire.TypeCommand && env.Command != nil {
-			go a.handleCommand(env.Command)
+		switch env.Type {
+		case wire.TypeCommand:
+			if env.Command != nil {
+				go a.handleCommand(env.Command)
+			}
+		case wire.TypeShellOpen:
+			if env.ShellOpen != nil {
+				go a.openShell(env.ShellOpen)
+			}
+		case wire.TypeShellInput:
+			if env.ShellInput != nil {
+				go a.writeShellInput(env.ShellInput)
+			}
+		case wire.TypeShellClose:
+			if env.ShellClose != nil {
+				go a.closeShell(env.ShellClose)
+			}
 		}
 	}
 }
