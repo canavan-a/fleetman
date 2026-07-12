@@ -10,6 +10,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/canavan-a/fleetman/internal/api"
 	"github.com/canavan-a/fleetman/wire"
@@ -78,6 +79,8 @@ type cmdModeModel struct {
 	client *api.Client
 	repo   string // GitHub "owner/repo", for resolving :upgrade with no version
 
+	width int // terminal width, from the last tea.WindowSizeMsg; 0 until the first one arrives
+
 	tag     string
 	devices []api.Device          // devices in current view
 	target  map[string]api.Device // pre-selected sidebar devices, if any
@@ -138,6 +141,10 @@ func (m cmdModeModel) Init() tea.Cmd { return textinput.Blink }
 
 func (m cmdModeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
+		return m, nil
+
 	case tea.KeyMsg:
 		if m.detailOpen {
 			rows := m.rowsToShow()
@@ -173,6 +180,13 @@ func (m cmdModeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.exitRequested = true
 			return m, cmd
 		case tea.KeyTab:
+			if !m.rowsFocused {
+				if ghost := colonCommandGhostSuffix(m.input.Value()); ghost != "" {
+					m.input.SetValue(m.input.Value() + ghost)
+					m.input.CursorEnd()
+					return m, nil
+				}
+			}
 			m.rowsFocused = !m.rowsFocused
 			if m.rowsFocused {
 				m.input.Blur()
@@ -344,17 +358,69 @@ func (m cmdModeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// knownColonCommands lists every ":..." command fire() understands, used by
-// colonCommandHint to tell "still typing toward a known command" apart from
-// "typed something invalid".
+// knownColonCommands lists every ":..." command fire() understands, used to
+// tell "still typing toward a known command" apart from "typed something
+// invalid" and to drive ghost-text autocomplete on the command word itself.
 var knownColonCommands = []string{":open", ":close", ":restart", ":upgrade"}
+
+type colonCommandState int
+
+const (
+	colonNone colonCommandState = iota
+	colonRecognized
+	colonTyping
+	colonUnknown
+)
+
+// classifyColonCommand buckets typed input for coloring/hinting: not a
+// colon-command at all, a fully recognized one (args and all), still a
+// valid prefix of exactly one known command word, or definitely invalid.
+func classifyColonCommand(text string) colonCommandState {
+	if !strings.HasPrefix(text, ":") {
+		return colonNone
+	}
+	switch {
+	case text == ":open", text == ":close":
+		return colonRecognized
+	case text == ":upgrade" || strings.HasPrefix(text, ":upgrade "):
+		return colonRecognized
+	case strings.HasPrefix(text, ":restart "):
+		return colonRecognized
+	}
+	for _, known := range knownColonCommands {
+		if strings.HasPrefix(known, text) {
+			return colonTyping
+		}
+	}
+	return colonUnknown
+}
+
+// colonCommandStyle returns the style the command word itself should be
+// rendered in, based on classifyColonCommand.
+func colonCommandStyle(text string) lipgloss.Style {
+	switch classifyColonCommand(text) {
+	case colonRecognized:
+		return okStyle
+	case colonTyping:
+		return dimStyle
+	case colonUnknown:
+		return errStyle
+	default:
+		return lipgloss.NewStyle()
+	}
+}
 
 // colonCommandHint renders a short preview of what a typed ":..." input
 // will do if fired, so the effect of a colon-command (and typos in one) are
 // visible before Enter is pressed. Returns "" for plain, non-colon input.
 func colonCommandHint(text string) string {
-	if !strings.HasPrefix(text, ":") {
+	switch classifyColonCommand(text) {
+	case colonNone:
 		return ""
+	case colonTyping:
+		return dimStyle.Render("↳ typing …")
+	case colonUnknown:
+		return errStyle.Render("↳ unknown command")
 	}
 
 	switch {
@@ -375,13 +441,45 @@ func colonCommandHint(text string) string {
 		}
 		return okStyle.Render("↳ restart service " + svc)
 	}
+	return ""
+}
 
+// colonCommandGhostSuffix returns the remainder of the single known command
+// word that completes text, e.g. ":op" against knownColonCommands returns
+// "en". Empty once the word is complete, args have started (a space was
+// typed), or nothing matches.
+func colonCommandGhostSuffix(text string) string {
+	// len(text) < 2 means there's nothing after the ':' yet — don't
+	// suggest until the user has typed at least one letter of a command.
+	if len(text) < 2 || !strings.HasPrefix(text, ":") || strings.ContainsRune(text, ' ') {
+		return ""
+	}
 	for _, known := range knownColonCommands {
-		if strings.HasPrefix(known, text) {
-			return dimStyle.Render("↳ typing …")
+		if strings.HasPrefix(known, text) && len(known) > len(text) {
+			return known[len(text):]
 		}
 	}
-	return errStyle.Render("↳ unknown command")
+	return ""
+}
+
+// renderCommandInput draws the input line, hand-rendering it when the text
+// is a ":..." command so the command word can be colored by recognition
+// state and trail into ghost-text autocomplete (Tab accepts it) — the same
+// pattern provisionModel uses for its tags field. Falls back to the plain
+// textinput view for ordinary (non-colon) input.
+func (m cmdModeModel) renderCommandInput() string {
+	value := m.input.Value()
+	if !strings.HasPrefix(value, ":") {
+		return m.input.View()
+	}
+	if m.rowsFocused {
+		return colonCommandStyle(value).Render(value)
+	}
+	var b strings.Builder
+	b.WriteString(colonCommandStyle(value).Render(value))
+	b.WriteString(suggestStyle.Render(colonCommandGhostSuffix(value)))
+	b.WriteString(rowCursorStyle.Render(" "))
+	return b.String()
 }
 
 // fire dispatches one line of typed input. ":open" and ":close" manage a
@@ -588,7 +686,7 @@ func (m cmdModeModel) liveShellCount() int {
 // a shell is open.
 func (m cmdModeModel) shellRowCols(deviceID string) (statusCol, outCol string) {
 	if errMsg, ok := m.shellErrs[deviceID]; ok {
-		return errStyle.Render("✗ " + truncate(errMsg, 24)), ""
+		return errStyle.Render("✗ " + truncate(errMsg, m.outputWidth())), ""
 	}
 	tail := lastNonEmptyLine(m.shellOutput[deviceID])
 	if m.shellClosed[deviceID] {
@@ -694,6 +792,7 @@ func (m cmdModeModel) View() string {
 	if len(rows) == 0 {
 		b.WriteString(dimStyle.Render("no devices in target"))
 	}
+	outW := m.outputWidth()
 	for i, d := range rows {
 		var statusCol, outCol, peekSrc string
 		has := true
@@ -739,7 +838,7 @@ func (m cmdModeModel) View() string {
 		if m.rowsFocused && i == m.rowCursor {
 			marker = "▶ "
 		}
-		line := fmt.Sprintf("%s%s %-16s %-14s %s", marker, onlineDot(d.Online()), truncate(deviceName(d), 16), statusCol, truncate(outCol, 60))
+		line := fmt.Sprintf("%s%s %-16s %-14s %s", marker, onlineDot(d.Online()), truncate(deviceName(d), 16), statusCol, truncate(outCol, outW))
 		if m.rowsFocused && i == m.rowCursor {
 			line = rowCursorStyle.Render(line)
 		}
@@ -755,7 +854,7 @@ func (m cmdModeModel) View() string {
 				peek, more = previewLines(peekSrc, m.peekLines)
 			}
 			for _, l := range peek {
-				b.WriteString(dimStyle.Render("      " + truncate(l, 76)))
+				b.WriteString(dimStyle.Render("      " + truncate(l, outW)))
 				b.WriteString("\n")
 			}
 			if more > 0 {
@@ -776,7 +875,7 @@ func (m cmdModeModel) View() string {
 		b.WriteString("\n\n")
 	}
 
-	b.WriteString(m.input.View())
+	b.WriteString(m.renderCommandInput())
 	b.WriteString("\n")
 	if !m.rowsFocused {
 		if hint := colonCommandHint(strings.TrimSpace(m.input.Value())); hint != "" {
@@ -882,6 +981,27 @@ func (m cmdModeModel) renderShellDetail(d api.Device) string {
 	b.WriteString(hintBarStyle.Render("←/→ · prev/next device   esc / enter · close"))
 
 	return paneFocusedStyle.Render(b.String())
+}
+
+// cmdRowPrefixWidth is the rendered width everything before the output
+// column takes up in a device row: marker(2) + status dot(1) + space(1) +
+// name(16) + space(1) + status(14) + space(1), matching the Sprintf layout
+// in View(). outputWidth uses it to fit the output column to the actual
+// terminal width instead of an arbitrary fixed cap.
+const cmdRowPrefixWidth = 36
+
+// outputWidth returns how many characters of live/one-shot output to show
+// per device row, sized to the real terminal width once known (falling
+// back to a reasonable default before the first WindowSizeMsg arrives).
+func (m cmdModeModel) outputWidth() int {
+	if m.width <= 0 {
+		return 100
+	}
+	w := m.width - cmdRowPrefixWidth - 2
+	if w < 20 {
+		w = 20
+	}
+	return w
 }
 
 func (m cmdModeModel) rowsToShow() []api.Device {

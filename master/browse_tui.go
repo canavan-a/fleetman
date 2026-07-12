@@ -403,9 +403,12 @@ func (m mainModel) handleBrowseKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			restored.devices = m.devices
 			restored.client = m.client
 			restored.exitRequested = false
+			restored.width = m.width
 			m.subModel = restored
 		} else {
-			m.subModel = newCmdModeModel(m.client, m.repo, m.activeTag, m.devices, m.selected)
+			cm := newCmdModeModel(m.client, m.repo, m.activeTag, m.devices, m.selected)
+			cm.width = m.width
+			m.subModel = cm
 		}
 		return m, m.subModel.Init()
 

@@ -36,3 +36,29 @@ func TestColonCommandHint(t *testing.T) {
 		}
 	}
 }
+
+func TestColonCommandGhostSuffix(t *testing.T) {
+	cases := []struct {
+		text string
+		want string
+	}{
+		{"", ""},
+		{"ls -la", ""},
+		{":", ""}, // nothing typed after ':' yet — no suggestion
+		{":o", "pen"},
+		{":op", "en"},
+		{":open", ""},  // already complete
+		{":open ", ""}, // args started
+		{":c", "lose"},
+		{":r", "estart"},
+		{":restart ", ""}, // args started
+		{":u", "pgrade"},
+		{":bogus", ""},
+	}
+	for _, c := range cases {
+		got := colonCommandGhostSuffix(c.text)
+		if got != c.want {
+			t.Errorf("colonCommandGhostSuffix(%q) = %q, want %q", c.text, got, c.want)
+		}
+	}
+}
