@@ -344,6 +344,46 @@ func (m cmdModeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// knownColonCommands lists every ":..." command fire() understands, used by
+// colonCommandHint to tell "still typing toward a known command" apart from
+// "typed something invalid".
+var knownColonCommands = []string{":open", ":close", ":restart", ":upgrade"}
+
+// colonCommandHint renders a short preview of what a typed ":..." input
+// will do if fired, so the effect of a colon-command (and typos in one) are
+// visible before Enter is pressed. Returns "" for plain, non-colon input.
+func colonCommandHint(text string) string {
+	if !strings.HasPrefix(text, ":") {
+		return ""
+	}
+
+	switch {
+	case text == ":open":
+		return okStyle.Render("↳ open shell on every device in view")
+	case text == ":close":
+		return okStyle.Render("↳ close open shell session(s)")
+	case text == ":upgrade" || strings.HasPrefix(text, ":upgrade "):
+		v := strings.TrimSpace(strings.TrimPrefix(text, ":upgrade"))
+		if v == "" {
+			return okStyle.Render("↳ upgrade agent to latest release")
+		}
+		return okStyle.Render("↳ upgrade agent to " + v)
+	case strings.HasPrefix(text, ":restart "):
+		svc := strings.TrimSpace(strings.TrimPrefix(text, ":restart "))
+		if svc == "" {
+			return dimStyle.Render("↳ restart <service> …")
+		}
+		return okStyle.Render("↳ restart service " + svc)
+	}
+
+	for _, known := range knownColonCommands {
+		if strings.HasPrefix(known, text) {
+			return dimStyle.Render("↳ typing …")
+		}
+	}
+	return errStyle.Render("↳ unknown command")
+}
+
 // fire dispatches one line of typed input. ":open" and ":close" manage a
 // broadcast shell session across every device currently in view; while such
 // a session has at least one live device, all other input is forwarded as
@@ -738,6 +778,12 @@ func (m cmdModeModel) View() string {
 
 	b.WriteString(m.input.View())
 	b.WriteString("\n")
+	if !m.rowsFocused {
+		if hint := colonCommandHint(strings.TrimSpace(m.input.Value())); hint != "" {
+			b.WriteString(hint)
+			b.WriteString("\n")
+		}
+	}
 	if m.err != "" {
 		b.WriteString(errStyle.Render("✗ " + m.err))
 		b.WriteString("\n")
