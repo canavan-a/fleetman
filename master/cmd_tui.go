@@ -81,6 +81,8 @@ type cmdModeModel struct {
 
 	width int // terminal width, from the last tea.WindowSizeMsg; 0 until the first one arrives
 
+	growAll int // "e"/"E" — extra output lines shown under every row at once (like peekLines, but all rows instead of just the cursor row)
+
 	tag     string
 	devices []api.Device          // devices in current view
 	target  map[string]api.Device // pre-selected sidebar devices, if any
@@ -230,6 +232,12 @@ func (m cmdModeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					} else if _, ok := m.results[id]; ok {
 						m.detailOpen = true
 					}
+				}
+			case "e":
+				m.growAll++
+			case "E":
+				if m.growAll > 0 {
+					m.growAll--
 				}
 			}
 			return m, nil
@@ -845,19 +853,27 @@ func (m cmdModeModel) View() string {
 		b.WriteString(line)
 		b.WriteString("\n")
 
-		if m.rowsFocused && i == m.rowCursor && m.peekLines > 0 && has {
+		// growAll (e/E) shows extra lines under every row; the cursor row
+		// also gets its own peekLines (l/h) on top of that, so it can be
+		// expanded further than the rest without growing all of them.
+		isCursor := m.rowsFocused && i == m.rowCursor
+		extra := m.growAll
+		if isCursor && m.peekLines > extra {
+			extra = m.peekLines
+		}
+		if extra > 0 && has {
 			var peek []string
 			var more int
 			if m.shellOpen {
-				peek, more = tailPreview(peekSrc, m.peekLines)
+				peek, more = tailPreview(peekSrc, extra)
 			} else {
-				peek, more = previewLines(peekSrc, m.peekLines)
+				peek, more = previewLines(peekSrc, extra)
 			}
 			for _, l := range peek {
 				b.WriteString(dimStyle.Render("      " + truncate(l, outW)))
 				b.WriteString("\n")
 			}
-			if more > 0 {
+			if more > 0 && isCursor {
 				b.WriteString(dimStyle.Render(fmt.Sprintf("      … %d more line(s), 'l' to expand", more)))
 				b.WriteString("\n")
 			}
@@ -889,7 +905,7 @@ func (m cmdModeModel) View() string {
 	}
 	switch {
 	case m.rowsFocused:
-		b.WriteString(hintBarStyle.Render("↑↓ move   ←→ peek more/less output   enter · view full output   tab · back to launcher   esc · back to browse"))
+		b.WriteString(hintBarStyle.Render("↑↓ move   ←→ peek this row   e/E · grow/shrink all rows   enter · view full output   tab · back to launcher   esc · back to browse"))
 	case m.shellOpen:
 		b.WriteString(hintBarStyle.Render("enter · send to all   ↑↓ history   tab · browse output   :close · end session(s)   esc · close & back to browse"))
 	default:
