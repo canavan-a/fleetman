@@ -248,6 +248,10 @@ func (a *Agent) handleCommand(cmd *wire.Command) {
 		a.execUpgrade(cmd)
 		// Upgrade either exits the process or sends its own result on failure.
 		return
+	case wire.ActionFetchFile:
+		result = a.execFetchFile(cmd)
+	case wire.ActionListFiles:
+		result = a.execListFiles(cmd)
 	default:
 		result.Stderr = fmt.Sprintf("unknown action: %s", cmd.Action)
 		result.Retcode = 1

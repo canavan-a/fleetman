@@ -7,7 +7,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -261,4 +264,128 @@ func (c *Client) PollShellOutput(sessionID string, since int) (ShellOutput, erro
 // CloseShell terminates a shell session.
 func (c *Client) CloseShell(sessionID string) error {
 	return c.do(http.MethodDelete, "/shell/"+sessionID, nil, nil)
+}
+
+// SetShellTimeout overrides the server's idle-reap timeout for one shell
+// session, for testing idle expiry without waiting out the default.
+func (c *Client) SetShellTimeout(sessionID string, seconds int) error {
+	return c.do(http.MethodPost, "/shell/"+sessionID+"/timeout", map[string]int{"seconds": seconds}, nil)
+}
+
+// FileInfo mirrors the server's uploaded-file metadata.
+type FileInfo struct {
+	Name       string    `json:"name"`
+	Size       int64     `json:"size"`
+	SHA256     string    `json:"sha256"`
+	UploadedAt time.Time `json:"uploaded_at"`
+}
+
+// ListFiles returns metadata for every file stored on the server.
+func (c *Client) ListFiles() ([]FileInfo, error) {
+	var resp struct {
+		Files []FileInfo `json:"files"`
+	}
+	if err := c.do(http.MethodGet, "/files", nil, &resp); err != nil {
+		return nil, err
+	}
+	return resp.Files, nil
+}
+
+// progressReader wraps a reader and reports cumulative bytes read.
+type progressReader struct {
+	r        io.Reader
+	sent     int64
+	total    int64
+	onUpdate func(sent, total int64)
+}
+
+func (p *progressReader) Read(buf []byte) (int, error) {
+	n, err := p.r.Read(buf)
+	if n > 0 {
+		p.sent += int64(n)
+		if p.onUpdate != nil {
+			p.onUpdate(p.sent, p.total)
+		}
+	}
+	return n, err
+}
+
+// UploadFile uploads a local file to the server's file store, reporting
+// progress via onProgress (may be called from a background goroutine's
+// perspective — it runs synchronously on the calling goroutine, once per
+// chunk read). Uses multipart/form-data since c.do only speaks JSON bodies.
+func (c *Client) UploadFile(path string, onProgress func(sent, total int64)) (FileInfo, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return FileInfo{}, err
+	}
+	defer f.Close()
+
+	stat, err := f.Stat()
+	if err != nil {
+		return FileInfo{}, err
+	}
+
+	pr, pw := io.Pipe()
+	mw := multipart.NewWriter(pw)
+
+	go func() {
+		defer pw.Close()
+		part, err := mw.CreateFormFile("file", filepath.Base(path))
+		if err != nil {
+			pw.CloseWithError(err)
+			return
+		}
+		pf := &progressReader{r: f, total: stat.Size(), onUpdate: onProgress}
+		if _, err := io.Copy(part, pf); err != nil {
+			pw.CloseWithError(err)
+			return
+		}
+		if err := mw.Close(); err != nil {
+			pw.CloseWithError(err)
+		}
+	}()
+
+	req, err := http.NewRequest(http.MethodPost, c.base+"/files", pr)
+	if err != nil {
+		return FileInfo{}, err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.key)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	for k, v := range c.extraHeaders {
+		if strings.EqualFold(k, "Authorization") {
+			continue
+		}
+		req.Header.Set(k, v)
+	}
+
+	// Uploads can run far longer than the 15s budget c.http uses for the
+	// rest of the control-plane API, so this gets its own client with no
+	// fixed deadline — the multipart body streaming from disk is the only
+	// thing bounding how long the request takes.
+	uploadClient := &http.Client{}
+	resp, err := uploadClient.Do(req)
+	if err != nil {
+		return FileInfo{}, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return FileInfo{}, err
+	}
+
+	if resp.StatusCode >= 300 {
+		var ae apiError
+		if json.Unmarshal(data, &ae) == nil && ae.Error != "" {
+			return FileInfo{}, fmt.Errorf("%s", ae.Error)
+		}
+		return FileInfo{}, fmt.Errorf("server returned %s", resp.Status)
+	}
+
+	var info FileInfo
+	if err := json.Unmarshal(data, &info); err != nil {
+		return FileInfo{}, err
+	}
+	return info, nil
 }

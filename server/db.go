@@ -104,6 +104,13 @@ func (db *DB) migrate() error {
 		key        TEXT NOT NULL UNIQUE,
 		created_at TEXT NOT NULL
 	);
+
+	CREATE TABLE IF NOT EXISTS files (
+		name        TEXT PRIMARY KEY,
+		size        INTEGER NOT NULL,
+		sha256      TEXT NOT NULL DEFAULT '',
+		uploaded_at TEXT NOT NULL
+	);
 	`
 	_, err := db.conn.Exec(schema)
 	return err
@@ -158,6 +165,63 @@ func (db *DB) DeleteMasterKey(id string) bool {
 	}
 	n, _ := res.RowsAffected()
 	return n > 0
+}
+
+// --- File operations ---
+
+// FileInfo is the public view of an uploaded file.
+type FileInfo struct {
+	Name       string    `json:"name"`
+	Size       int64     `json:"size"`
+	SHA256     string    `json:"sha256"`
+	UploadedAt time.Time `json:"uploaded_at"`
+}
+
+// InsertFile records (or replaces) metadata for an uploaded file.
+func (db *DB) InsertFile(name string, size int64, sha256 string, now time.Time) error {
+	_, err := db.conn.Exec(
+		`INSERT INTO files (name, size, sha256, uploaded_at) VALUES (?, ?, ?, ?)
+		 ON CONFLICT(name) DO UPDATE SET size = excluded.size, sha256 = excluded.sha256, uploaded_at = excluded.uploaded_at`,
+		name, size, sha256, now.Format(time.RFC3339),
+	)
+	return err
+}
+
+// ListFiles returns all uploaded file records, newest first.
+func (db *DB) ListFiles() []FileInfo {
+	var rows []struct {
+		Name       string `db:"name"`
+		Size       int64  `db:"size"`
+		SHA256     string `db:"sha256"`
+		UploadedAt string `db:"uploaded_at"`
+	}
+	err := db.conn.Select(&rows, `SELECT name, size, sha256, uploaded_at FROM files ORDER BY uploaded_at DESC`)
+	if err != nil {
+		log.Printf("ListFiles error: %v", err)
+		return nil
+	}
+	out := make([]FileInfo, len(rows))
+	for i, r := range rows {
+		t, _ := time.Parse(time.RFC3339, r.UploadedAt)
+		out[i] = FileInfo{Name: r.Name, Size: r.Size, SHA256: r.SHA256, UploadedAt: t}
+	}
+	return out
+}
+
+// GetFile returns metadata for a single uploaded file.
+func (db *DB) GetFile(name string) (FileInfo, bool) {
+	var r struct {
+		Name       string `db:"name"`
+		Size       int64  `db:"size"`
+		SHA256     string `db:"sha256"`
+		UploadedAt string `db:"uploaded_at"`
+	}
+	err := db.conn.Get(&r, `SELECT name, size, sha256, uploaded_at FROM files WHERE name = ?`, name)
+	if err != nil {
+		return FileInfo{}, false
+	}
+	t, _ := time.Parse(time.RFC3339, r.UploadedAt)
+	return FileInfo{Name: r.Name, Size: r.Size, SHA256: r.SHA256, UploadedAt: t}, true
 }
 
 // --- Device operations ---

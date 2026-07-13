@@ -37,6 +37,7 @@ type Hub struct {
 	Registry *Registry
 	Commands *CommandStore
 	Shells   *ShellStore
+	filesDir string
 }
 
 // --- WebSocket endpoint (device auth) ---
@@ -540,6 +541,32 @@ func (h *Hub) HandleCloseShell(w http.ResponseWriter, r *http.Request) {
 	h.Shells.Close(id)
 	w.WriteHeader(http.StatusOK)
 	log.Printf("closed shell session %s", id)
+}
+
+// postShellTimeoutRequest is the JSON body for POST /shell/{id}/timeout.
+type postShellTimeoutRequest struct {
+	Seconds int `json:"seconds"`
+}
+
+// HandleSetShellTimeout handles POST /shell/{id}/timeout. Overrides the idle
+// reap timeout for one session — a test-only knob for exercising idle expiry
+// without waiting out shellIdleTimeout.
+func (h *Hub) HandleSetShellTimeout(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+
+	var req postShellTimeoutRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Seconds <= 0 {
+		http.Error(w, `{"error":"seconds must be a positive integer"}`, http.StatusBadRequest)
+		return
+	}
+
+	if !h.Shells.SetIdleTimeout(id, time.Duration(req.Seconds)*time.Second) {
+		http.Error(w, `{"error":"session not found"}`, http.StatusNotFound)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	log.Printf("shell session %s idle timeout overridden to %ds", id, req.Seconds)
 }
 
 // ReapIdleShells runs until stopped, periodically closing shell sessions

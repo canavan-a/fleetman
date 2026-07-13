@@ -74,6 +74,8 @@ const (
 	ActionRunCommand     = "run_command"
 	ActionRestartService = "restart_service"
 	ActionUpgrade        = "upgrade"
+	ActionFetchFile      = "fetch_file"
+	ActionListFiles      = "list_files"
 )
 
 // Envelope type constants.

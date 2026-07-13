@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -73,6 +75,31 @@ func shellPollAfter() tea.Cmd {
 	return tea.Tick(shellPollInterval, func(t time.Time) tea.Msg { return shellPollTickMsg{} })
 }
 
+// fileListMsg carries the result of a ":listf" fetch.
+type fileListMsg struct {
+	files []api.FileInfo
+	err   error
+}
+
+// uploadProgressMsg carries one progress update (or the final outcome) of a
+// ":uploadf" upload in progress.
+type uploadProgressMsg struct {
+	sent, total int64
+	done        bool
+	info        api.FileInfo
+	err         error
+}
+
+// waitUploadProgress reads the next progress update off ch — the
+// channel-listening pattern for driving a bubbletea view off a single
+// long-running side effect (here, one multipart HTTP upload) instead of a
+// pollable HTTP endpoint like shell output uses.
+func waitUploadProgress(ch <-chan uploadProgressMsg) tea.Cmd {
+	return func() tea.Msg {
+		return <-ch
+	}
+}
+
 // --- model ---
 
 type cmdModeModel struct {
@@ -114,13 +141,30 @@ type cmdModeModel struct {
 	shellClosed   map[string]bool   // deviceID -> session no longer live
 	shellErrs     map[string]string // deviceID -> open/poll/unsupported error
 
+	// fileList/fileListErr hold the last ":listf" result, shown under the
+	// command strip until superseded by another ":listf" or a plain command.
+	fileList    []api.FileInfo
+	fileListErr string
+
+	// uploading tracks an in-flight ":uploadf", driven by uploadCh (see
+	// waitUploadProgress) rather than polling, since a multipart upload is
+	// one continuous HTTP call.
+	uploading   bool
+	uploadName  string
+	uploadSent  int64
+	uploadTotal int64
+	uploadErr   string
+	uploadDone  string // set to a summary line once the upload completes ok
+	uploadCh    chan uploadProgressMsg
+
 	err           string
+	helpText      string // set by ":help" to a rendered listing of colon commands
 	exitRequested bool
 }
 
 func newCmdModeModel(client *api.Client, repo, tag string, devices []api.Device, target map[string]api.Device) cmdModeModel {
 	ti := textinput.New()
-	ti.Placeholder = "command  (or  :open, :close, :restart <service>, :upgrade [version])"
+	ti.Placeholder = "command  (or  :help  for all colon commands)"
 	ti.Width = 60
 	ti.Focus()
 	return cmdModeModel{
@@ -361,6 +405,30 @@ func (m cmdModeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case shellClosedMsg:
 		m.shellClosed[msg.deviceID] = true
 		return m, nil
+
+	case fileListMsg:
+		if msg.err != nil {
+			m.fileListErr = msg.err.Error()
+			m.fileList = nil
+			return m, nil
+		}
+		m.fileListErr = ""
+		m.fileList = msg.files
+		return m, nil
+
+	case uploadProgressMsg:
+		if !msg.done {
+			m.uploadSent = msg.sent
+			m.uploadTotal = msg.total
+			return m, waitUploadProgress(m.uploadCh)
+		}
+		m.uploading = false
+		if msg.err != nil {
+			m.uploadErr = msg.err.Error()
+		} else {
+			m.uploadDone = fmt.Sprintf("uploaded %s (%d bytes)", msg.info.Name, msg.info.Size)
+		}
+		return m, nil
 	}
 
 	return m, nil
@@ -369,7 +437,22 @@ func (m cmdModeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // knownColonCommands lists every ":..." command fire() understands, used to
 // tell "still typing toward a known command" apart from "typed something
 // invalid" and to drive ghost-text autocomplete on the command word itself.
-var knownColonCommands = []string{":open", ":close", ":restart", ":upgrade"}
+var knownColonCommands = []string{":open", ":close", ":restart", ":upgrade", ":listf", ":uploadf", ":sendf", ":files", ":test-timeout", ":help"}
+
+// colonCommandHelp lists every colon command with a short description, in
+// the order shown by ":help".
+var colonCommandHelp = []struct{ cmd, desc string }{
+	{":open", "open shell on every device in view"},
+	{":close", "close open shell session(s)"},
+	{":restart <service>", "restart a service"},
+	{":upgrade [version]", "upgrade agent to latest release or a given version"},
+	{":listf", "list files stored on the server"},
+	{":uploadf <local-path>", "upload a file to the server"},
+	{":sendf <name> [path]", "send a stored file to target devices"},
+	{":files", "list files in the common folder on target devices"},
+	{":test-timeout <seconds>", "(open shell only) set the server idle timeout for open session(s), for testing expiry"},
+	{":help", "list all colon commands"},
+}
 
 type colonCommandState int
 
@@ -393,6 +476,16 @@ func classifyColonCommand(text string) colonCommandState {
 	case text == ":upgrade" || strings.HasPrefix(text, ":upgrade "):
 		return colonRecognized
 	case strings.HasPrefix(text, ":restart "):
+		return colonRecognized
+	case text == ":listf", text == ":files":
+		return colonRecognized
+	case strings.HasPrefix(text, ":uploadf "):
+		return colonRecognized
+	case strings.HasPrefix(text, ":sendf "):
+		return colonRecognized
+	case strings.HasPrefix(text, ":test-timeout "):
+		return colonRecognized
+	case text == ":help":
 		return colonRecognized
 	}
 	for _, known := range knownColonCommands {
@@ -448,6 +541,34 @@ func colonCommandHint(text string) string {
 			return dimStyle.Render("↳ restart <service> …")
 		}
 		return okStyle.Render("↳ restart service " + svc)
+	case text == ":listf":
+		return okStyle.Render("↳ list files stored on the server")
+	case text == ":files":
+		return okStyle.Render("↳ list files in the common folder on target devices")
+	case strings.HasPrefix(text, ":uploadf "):
+		p := strings.TrimSpace(strings.TrimPrefix(text, ":uploadf "))
+		if p == "" {
+			return dimStyle.Render("↳ uploadf <local-path> …")
+		}
+		return okStyle.Render("↳ upload " + p + " to the server")
+	case strings.HasPrefix(text, ":sendf "):
+		rest := strings.TrimSpace(strings.TrimPrefix(text, ":sendf "))
+		if rest == "" {
+			return dimStyle.Render("↳ sendf <name> [path] …")
+		}
+		fields := strings.Fields(rest)
+		if len(fields) == 1 {
+			return okStyle.Render("↳ send " + fields[0] + " to common folder on target devices")
+		}
+		return okStyle.Render("↳ send " + fields[0] + " to " + fields[1] + " on target devices")
+	case strings.HasPrefix(text, ":test-timeout "):
+		secs := strings.TrimSpace(strings.TrimPrefix(text, ":test-timeout "))
+		if secs == "" {
+			return dimStyle.Render("↳ test-timeout <seconds> …")
+		}
+		return okStyle.Render("↳ set open session idle timeout to " + secs + "s (testing)")
+	case text == ":help":
+		return okStyle.Render("↳ list all colon commands")
 	}
 	return ""
 }
@@ -490,6 +611,58 @@ func (m cmdModeModel) renderCommandInput() string {
 	return b.String()
 }
 
+// renderFilesBlock renders whichever of ":listf"'s result or ":uploadf"'s
+// progress/outcome is currently live, shown just above the command strip
+// (the same slot the shell status line / "last: ..." summary occupy).
+func (m cmdModeModel) renderFilesBlock() string {
+	var b strings.Builder
+
+	if m.uploading || m.uploadErr != "" || m.uploadDone != "" {
+		switch {
+		case m.uploading:
+			pct := 0.0
+			if m.uploadTotal > 0 {
+				pct = float64(m.uploadSent) / float64(m.uploadTotal) * 100
+			}
+			b.WriteString(dimStyle.Render(fmt.Sprintf("uploading %s: %s", m.uploadName, renderProgressBar(pct, 24))))
+		case m.uploadErr != "":
+			b.WriteString(errStyle.Render("✗ upload failed: " + m.uploadErr))
+		case m.uploadDone != "":
+			b.WriteString(okStyle.Render("✓ " + m.uploadDone))
+		}
+		return b.String()
+	}
+
+	if m.fileListErr != "" {
+		return errStyle.Render("✗ " + m.fileListErr)
+	}
+	if m.fileList != nil {
+		if len(m.fileList) == 0 {
+			return dimStyle.Render("no files stored on server")
+		}
+		b.WriteString(dimStyle.Render("files on server:"))
+		for _, f := range m.fileList {
+			b.WriteString("\n  ")
+			b.WriteString(fmt.Sprintf("%-24s %8d bytes   %s", f.Name, f.Size, f.UploadedAt.Local().Format("2006-01-02 15:04")))
+		}
+		return b.String()
+	}
+
+	return ""
+}
+
+// renderProgressBar draws a simple "[####----] 42%" bar of the given width.
+func renderProgressBar(pct float64, width int) string {
+	if pct < 0 {
+		pct = 0
+	}
+	if pct > 100 {
+		pct = 100
+	}
+	filled := int(pct / 100 * float64(width))
+	return fmt.Sprintf("[%s%s] %.0f%%", strings.Repeat("#", filled), strings.Repeat("-", width-filled), pct)
+}
+
 // fire dispatches one line of typed input. ":open" and ":close" manage a
 // broadcast shell session across every device currently in view; while such
 // a session has at least one live device, all other input is forwarded as
@@ -502,6 +675,12 @@ func (m cmdModeModel) fire(text string) (tea.Model, tea.Cmd) {
 		if text == ":close" {
 			return m.closeShellSessions()
 		}
+		if strings.HasPrefix(text, ":test-timeout ") {
+			return m.fireTestTimeout(strings.TrimSpace(strings.TrimPrefix(text, ":test-timeout ")))
+		}
+		if text == ":help" {
+			return m.fireHelp()
+		}
 		return m.fireShell(text)
 	}
 	if text == ":close" {
@@ -509,6 +688,22 @@ func (m cmdModeModel) fire(text string) (tea.Model, tea.Cmd) {
 		m.histIdx = len(m.history)
 		m.input.SetValue("")
 		return m, nil
+	}
+	if strings.HasPrefix(text, ":test-timeout ") {
+		m.history = append(m.history, text)
+		m.histIdx = len(m.history)
+		m.input.SetValue("")
+		m.err = "test-timeout: no open shell session — :open first"
+		return m, nil
+	}
+	if text == ":help" {
+		return m.fireHelp()
+	}
+	if text == ":listf" {
+		return m.fireListFiles()
+	}
+	if strings.HasPrefix(text, ":uploadf ") {
+		return m.fireUploadFile(strings.TrimSpace(strings.TrimPrefix(text, ":uploadf ")))
 	}
 
 	m.history = append(m.history, text)
@@ -520,6 +715,11 @@ func (m cmdModeModel) fire(text string) (tea.Model, tea.Cmd) {
 	m.detailOpen = false
 	m.peekLines = 0
 	m.input.SetValue("")
+	m.fileList = nil
+	m.fileListErr = ""
+	m.uploadDone = ""
+	m.uploadErr = ""
+	m.helpText = ""
 
 	target := api.Target{}
 	switch {
@@ -577,11 +777,88 @@ func (m cmdModeModel) fire(text string) (tea.Model, tea.Cmd) {
 		payload = map[string]interface{}{"service": strings.TrimSpace(strings.TrimPrefix(text, ":restart "))}
 	}
 
+	if text == ":files" {
+		action = wire.ActionListFiles
+		payload = nil
+	}
+
+	if strings.HasPrefix(text, ":sendf ") {
+		fields := strings.Fields(strings.TrimPrefix(text, ":sendf "))
+		action = wire.ActionFetchFile
+		payload = map[string]interface{}{"name": fields[0]}
+		if len(fields) > 1 {
+			payload["path"] = fields[1]
+		}
+	}
+
 	req := api.PostCommandRequest{Action: action, Target: target, Payload: payload}
 	return m, func() tea.Msg {
 		resp, err := client.PostCommand(req)
 		return cmdPostedMsg{resp: resp, err: err}
 	}
+}
+
+// fireListFiles handles ":listf" — fetches file metadata from the server's
+// file store and displays it under the command strip.
+func (m cmdModeModel) fireListFiles() (tea.Model, tea.Cmd) {
+	m.history = append(m.history, ":listf")
+	m.histIdx = len(m.history)
+	m.input.SetValue("")
+	m.fileListErr = ""
+	m.uploadDone = ""
+	m.uploadErr = ""
+
+	client := m.client
+	return m, func() tea.Msg {
+		files, err := client.ListFiles()
+		return fileListMsg{files: files, err: err}
+	}
+}
+
+// fireUploadFile handles ":uploadf <local-path>" — validates the local
+// path, then starts an upload in a background goroutine that reports
+// progress back into the TUI over m.uploadCh (see waitUploadProgress).
+func (m cmdModeModel) fireUploadFile(path string) (tea.Model, tea.Cmd) {
+	m.history = append(m.history, ":uploadf "+path)
+	m.histIdx = len(m.history)
+	m.input.SetValue("")
+	m.fileList = nil
+	m.fileListErr = ""
+
+	if path == "" {
+		m.err = "usage: :uploadf <local-path>"
+		return m, nil
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		m.err = err.Error()
+		return m, nil
+	}
+	if info.IsDir() {
+		m.err = path + " is a directory"
+		return m, nil
+	}
+
+	m.err = ""
+	m.uploading = true
+	m.uploadName = path
+	m.uploadSent = 0
+	m.uploadTotal = info.Size()
+	m.uploadErr = ""
+	m.uploadDone = ""
+
+	ch := make(chan uploadProgressMsg, 1)
+	m.uploadCh = ch
+	client := m.client
+
+	go func() {
+		fi, err := client.UploadFile(path, func(sent, total int64) {
+			ch <- uploadProgressMsg{sent: sent, total: total}
+		})
+		ch <- uploadProgressMsg{done: true, info: fi, err: err}
+	}()
+
+	return m, waitUploadProgress(ch)
 }
 
 // openShellSessions handles ":open" — it opens one persistent shell per
@@ -672,6 +949,54 @@ func (m cmdModeModel) fireShell(text string) (tea.Model, tea.Cmd) {
 		deviceID, sessionID := deviceID, sessionID
 		cmds = append(cmds, func() tea.Msg {
 			err := client.SendShellInput(sessionID, text+"\n")
+			return shellInputSentMsg{deviceID: deviceID, err: err}
+		})
+	}
+	return m, tea.Batch(cmds...)
+}
+
+// fireHelp handles ":help" — renders the full list of colon commands under
+// the command strip.
+func (m cmdModeModel) fireHelp() (tea.Model, tea.Cmd) {
+	m.history = append(m.history, ":help")
+	m.histIdx = len(m.history)
+	m.input.SetValue("")
+
+	var b strings.Builder
+	for i, c := range colonCommandHelp {
+		if i > 0 {
+			b.WriteString("\n")
+		}
+		b.WriteString(c.cmd + " — " + c.desc)
+	}
+	m.helpText = b.String()
+	m.err = ""
+	return m, nil
+}
+
+// fireTestTimeout handles ":test-timeout <seconds>" — overrides the
+// server-side idle-reap timeout on every live open shell session, so idle
+// expiry can be exercised without waiting out the real default.
+func (m cmdModeModel) fireTestTimeout(secsText string) (tea.Model, tea.Cmd) {
+	m.history = append(m.history, ":test-timeout "+secsText)
+	m.histIdx = len(m.history)
+	m.input.SetValue("")
+
+	seconds, err := strconv.Atoi(secsText)
+	if err != nil || seconds <= 0 {
+		m.err = "test-timeout: seconds must be a positive integer"
+		return m, nil
+	}
+
+	client := m.client
+	var cmds []tea.Cmd
+	for deviceID, sessionID := range m.shellSessions {
+		if m.shellClosed[deviceID] {
+			continue
+		}
+		deviceID, sessionID := deviceID, sessionID
+		cmds = append(cmds, func() tea.Msg {
+			err := client.SetShellTimeout(sessionID, seconds)
 			return shellInputSentMsg{deviceID: deviceID, err: err}
 		})
 	}
@@ -891,6 +1216,11 @@ func (m cmdModeModel) View() string {
 		b.WriteString("\n\n")
 	}
 
+	if block := m.renderFilesBlock(); block != "" {
+		b.WriteString(block)
+		b.WriteString("\n\n")
+	}
+
 	b.WriteString(m.renderCommandInput())
 	b.WriteString("\n")
 	if !m.rowsFocused {
@@ -901,6 +1231,10 @@ func (m cmdModeModel) View() string {
 	}
 	if m.err != "" {
 		b.WriteString(errStyle.Render("✗ " + m.err))
+		b.WriteString("\n")
+	}
+	if m.helpText != "" {
+		b.WriteString(dimStyle.Render(m.helpText))
 		b.WriteString("\n")
 	}
 	switch {

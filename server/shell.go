@@ -16,11 +16,12 @@ type shellChunk struct {
 // existing command-result polling pattern rather than requiring the master
 // to hold its own WebSocket.
 type shellSessionRecord struct {
-	mu       sync.Mutex
-	deviceID string
-	chunks   []shellChunk
-	closed   bool
-	lastUsed time.Time
+	mu          sync.Mutex
+	deviceID    string
+	chunks      []shellChunk
+	closed      bool
+	lastUsed    time.Time
+	idleTimeout time.Duration // per-session override; 0 means use the store default
 }
 
 // ShellStore tracks open shell sessions in memory (no persistence needed —
@@ -96,6 +97,20 @@ func (s *ShellStore) Touch(sessionID string) {
 	rec.mu.Unlock()
 }
 
+// SetIdleTimeout overrides the idle timeout used for one session, for
+// testing expiry behavior without waiting out the default. Returns false if
+// the session doesn't exist.
+func (s *ShellStore) SetIdleTimeout(sessionID string, d time.Duration) bool {
+	rec := s.Get(sessionID)
+	if rec == nil {
+		return false
+	}
+	rec.mu.Lock()
+	rec.idleTimeout = d
+	rec.mu.Unlock()
+	return true
+}
+
 // expiredShell identifies a session whose agent-side process needs to be
 // told to terminate because nothing (input or output) has touched it in a
 // while — most commonly a master that crashed or lost its connection
@@ -123,12 +138,16 @@ func (s *ShellStore) ReapIdle(idleTimeout, closedGrace time.Duration) []expiredS
 		closed := rec.closed
 		idle := now.Sub(rec.lastUsed)
 		deviceID := rec.deviceID
+		timeout := idleTimeout
+		if rec.idleTimeout > 0 {
+			timeout = rec.idleTimeout
+		}
 		rec.mu.Unlock()
 
 		switch {
 		case closed && idle >= closedGrace:
 			delete(s.sessions, id)
-		case !closed && idle >= idleTimeout:
+		case !closed && idle >= timeout:
 			expired = append(expired, expiredShell{sessionID: id, deviceID: deviceID})
 		}
 	}

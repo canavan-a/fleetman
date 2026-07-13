@@ -17,6 +17,7 @@ func main() {
 	addr        := flag.String("addr", ":8080", "public listen address")
 	adminAddr   := flag.String("admin-addr", "127.0.0.1:3333", "admin listen address (localhost only); set empty to disable")
 	dbPath      := flag.String("db", "fleetman.db", "path to SQLite database file (created if missing)")
+	filesDir    := flag.String("files-dir", "fleetman-files", "directory to store uploaded files (created if missing)")
 	showVersion := flag.Bool("version", false, "print version and exit")
 	flag.Usage = func() { fmt.Print(cliUsage) }
 	flag.Parse()
@@ -42,6 +43,10 @@ func main() {
 	}
 	defer db.Close()
 
+	if err := os.MkdirAll(*filesDir, 0755); err != nil {
+		log.Fatalf("FATAL: create files dir: %v", err)
+	}
+
 	registry := NewRegistry(db)
 	cmdStore  := NewCommandStore(db)
 	shellStore := NewShellStore()
@@ -49,6 +54,7 @@ func main() {
 		Registry: registry,
 		Commands: cmdStore,
 		Shells:   shellStore,
+		filesDir: *filesDir,
 	}
 
 	// --- Public API ---
@@ -83,6 +89,10 @@ func main() {
 	mux.Handle("POST /shell/{id}/input",          auth(http.HandlerFunc(hub.HandleShellInput)))
 	mux.Handle("GET /shell/{id}/output",          auth(http.HandlerFunc(hub.HandleShellOutput)))
 	mux.Handle("DELETE /shell/{id}",              auth(http.HandlerFunc(hub.HandleCloseShell)))
+	mux.Handle("POST /shell/{id}/timeout",        auth(http.HandlerFunc(hub.HandleSetShellTimeout)))
+	mux.Handle("POST /files",                     auth(http.HandlerFunc(hub.HandleUploadFile)))
+	mux.Handle("GET /files",                      auth(http.HandlerFunc(hub.HandleListFiles)))
+	mux.HandleFunc("GET /files/{name}/download",  hub.HandleDownloadFile)
 
 	go hub.ReapIdleShells()
 
