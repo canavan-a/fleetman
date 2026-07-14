@@ -791,6 +791,22 @@ func (m cmdModeModel) fire(text string) (tea.Model, tea.Cmd) {
 		}
 	}
 
+	if action == wire.ActionListFiles || action == wire.ActionFetchFile {
+		var unsupported []string
+		for _, d := range m.rowsToShow() {
+			if !d.Online() {
+				continue
+			}
+			if ok, reason := deviceSupportsFeature(d, "files"); !ok {
+				unsupported = append(unsupported, fmt.Sprintf("%s (%s)", d.DeviceID, reason))
+			}
+		}
+		if len(unsupported) > 0 {
+			m.err = "files unsupported on: " + strings.Join(unsupported, ", ")
+			return m, nil
+		}
+	}
+
 	req := api.PostCommandRequest{Action: action, Target: target, Payload: payload}
 	return m, func() tea.Msg {
 		resp, err := client.PostCommand(req)
