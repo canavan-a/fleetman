@@ -50,6 +50,8 @@ func main() {
 		cmdLogout(path)
 	case "header":
 		cmdHeader(path, flag.Args()[1:])
+	case "upload":
+		cmdUpload(requireConfig(path, flags), flag.Args()[1:])
 	case "help", "--help", "-h":
 		usage()
 	default:
@@ -78,6 +80,7 @@ Commands:
   header add    Add a static extra header (--header "Name: Value")
   header list   List configured extra headers
   header clear  Remove all configured extra headers
+  upload        Upload one or more local files to the server's file store
 
 `)
 }
